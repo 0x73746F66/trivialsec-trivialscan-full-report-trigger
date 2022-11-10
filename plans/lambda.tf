@@ -5,7 +5,8 @@ resource "aws_lambda_function" "dashboard_compliance_graphs" {
   role          = aws_iam_role.dashboard_compliance_graphs_role.arn
   handler       = "app.handler"
   runtime       = local.python_version
-  timeout       = 900
+  timeout       = local.timeout
+  memory_size   = local.memory_size
 
   environment {
     variables = {
@@ -24,19 +25,9 @@ resource "aws_lambda_function" "dashboard_compliance_graphs" {
   tags = local.tags
 }
 resource "aws_lambda_permission" "allow_bucket" {
-  statement_id  = "${var.app_env}AllowExecutionFromS3Bucket"
+  statement_id  = "${var.app_env}AllowExecutionFromS3BucketComplianceGraphs"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.dashboard_compliance_graphs.arn
   principal     = "s3.amazonaws.com"
   source_arn    = "arn:aws:s3:::${data.terraform_remote_state.trivialscan_s3.outputs.trivialscan_store_bucket}"
-}
-resource "aws_s3_bucket_notification" "bucket_notification" {
-  bucket = data.terraform_remote_state.trivialscan_s3.outputs.trivialscan_store_bucket
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.dashboard_compliance_graphs.arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_prefix       = "${var.app_env}/accounts/"
-    filter_suffix       = "full-report.json"
-  }
-  depends_on = [aws_lambda_permission.allow_bucket]
 }
