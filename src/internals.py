@@ -427,8 +427,8 @@ class EvaluationItem(DefaultInfo):
         validate_assignment = True
 
     report_id: str
-    rule_id: str
-    group_id: str
+    rule_id: int
+    group_id: int
     key: str
     name: str
     group: str
@@ -438,7 +438,7 @@ class EvaluationItem(DefaultInfo):
     result_text: str
     result_level: Union[str, None] = Field(default=None)
     score: int = Field(default=0)
-    description: str
+    description: Optional[str]
     metadata: dict[str, Any] = Field(default={})
     cve: Union[list[str], None] = Field(default=[])
     cvss2: Union[str, Any] = Field(default=None)

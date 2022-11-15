@@ -13,7 +13,7 @@ resource "aws_lambda_function" "dashboard_compliance_graphs" {
       APP_ENV = var.app_env
       APP_NAME = var.app_name
       LOG_LEVEL = var.log_level
-      STORE_BUCKET = data.terraform_remote_state.trivialscan_s3.outputs.trivialscan_store_bucket
+      STORE_BUCKET = data.terraform_remote_state.trivialscan_s3.outputs.trivialscan_store_bucket[0]
     }
   }
   lifecycle {
@@ -29,5 +29,5 @@ resource "aws_lambda_permission" "allow_bucket" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.dashboard_compliance_graphs.arn
   principal     = "s3.amazonaws.com"
-  source_arn    = "arn:aws:s3:::${data.terraform_remote_state.trivialscan_s3.outputs.trivialscan_store_bucket}"
+  source_arn    = "arn:aws:s3:::${data.terraform_remote_state.trivialscan_s3.outputs.trivialscan_store_bucket[0]}"
 }

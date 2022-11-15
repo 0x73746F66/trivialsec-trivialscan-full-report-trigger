@@ -75,8 +75,8 @@ def _certificate_issues(account_name: str, reports: list[internals.FullReport]):
     for item in priority_data:
         if item.key.startswith("trust_android_"):
             continue
-        item: internals.EvaluationItem
-        key = item.rule_id if not item.key.startswith("trust_") else "trust"
+
+        key = item.key if not item.key.startswith("trust_") else "trust"
         target = f"{item.certificate.sha1_fingerprint}{key}"  # type: ignore
         if target not in seen:
             uniq_data.append(item)
@@ -122,7 +122,7 @@ def _findings_data(account_name: str, reports: list[internals.FullReport]):
     uniq_data: list[internals.EvaluationItem] = []
     seen = set()
     for item in priority_data:
-        target = f"{item.transport.hostname}{item.transport.port}{item.transport.peer_address}{item.rule_id}"  # type: ignore
+        target = f"{item.transport.hostname}{item.transport.port}{item.transport.peer_address}{item.key}"  # type: ignore
         if target not in seen:
             uniq_data.append(item)
         seen.add(target)
