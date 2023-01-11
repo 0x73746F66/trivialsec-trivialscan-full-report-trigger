@@ -213,10 +213,11 @@ class HostTLS(BaseModel):
 
 
 class HostHTTP(BaseModel):
-    title: str
-    status_code: conint(ge=100, le=599)  # type: ignore
-    headers: dict[str, str]
-    body_hash: str
+    title: Optional[str]
+    status_code: Optional[conint(ge=100, le=599)]  # type: ignore
+    headers: Optional[dict[str, str]]
+    body_hash: Optional[str]
+    request_url: Optional[str]
 
 
 class HostTransport(BaseModel):
@@ -379,47 +380,34 @@ class ReferenceItem(BaseModel):
     url: Union[AnyHttpUrl, None]
 
 
-class ReportSummary(DefaultInfo, DAL):
+class ScanRecordType(str, Enum):
+    MONITORING = "Managed Monitoring"
+    ONDEMAND = "Managed On-demand"
+    SELF_MANAGED = "Customer-managed"
+
+
+class ScanRecordCategory(str, Enum):
+    ASM = "Attack Surface Monitoring"
+    RECONNAISSANCE = "Reconnaissance"
+    OSINT = "Public Data Sources"
+    INTEGRATION_DATA = "Third Party Integration"
+
+class ReportSummary(DefaultInfo):
     report_id: str
     project_name: Union[str, None]
-    targets: Union[list[str], list[Host]] = Field(default=[])
+    targets: list[Host] = Field(default=[])
     date: Optional[datetime]
     execution_duration_seconds: Union[PositiveFloat, None] = Field(default=None)
     score: int = Field(default=0)
     results: Optional[dict[str, int]]
-    certificates: Union[list[str], list[Certificate]] = Field(default=[])
+    certificates: Optional[list[Certificate]] = Field(default=[])
     results_uri: Optional[str]
     flags: Union[Flags, None] = Field(default=None)
     config: Union[Config, None] = Field(default=None)
     client: Optional[Union[ClientInfo, None]] = Field(default=None)
-
-    def load(
-        self, report_id: Union[str, None] = None, account_name: Union[str, None] = None
-    ) -> Union["ReportSummary", None]:
-        if report_id:
-            self.report_id = report_id
-        if account_name:
-            self.account_name = account_name
-
-        object_key = f"{APP_ENV}/accounts/{self.account_name}/results/{self.report_id}/summary.json"
-        raw = services.aws.get_s3(path_key=object_key)
-        if not raw:
-            logger.warning(f"Missing ReportSummary {object_key}")
-            return
-        try:
-            data = json.loads(raw)
-        except json.decoder.JSONDecodeError as err:
-            logger.debug(err, exc_info=True)
-            return
-        if not data or not isinstance(data, dict):
-            logger.warning(f"Missing ReportSummary {object_key}")
-            return
-        super().__init__(**data)
-        return self
-
-    def save(self) -> bool:
-        object_key = f"{APP_ENV}/accounts/{self.account_name}/results/{self.report_id}/summary.json"
-        return services.aws.store_s3(object_key, json.dumps(self.dict(), default=str))
+    type: Union[ScanRecordType, None] = Field(default=None)
+    category: Union[ScanRecordCategory, None] = Field(default=None)
+    is_passive: Optional[bool] = Field(default=True)
 
 
 class EvaluationItem(DefaultInfo):
@@ -465,6 +453,16 @@ class EvaluationItem(DefaultInfo):
 class FullReport(ReportSummary, DAL):
     evaluations: Optional[list[EvaluationItem]] = Field(default=[])
 
+    def exists(
+        self, report_id: Union[str, None] = None, account_name: Union[str, None] = None
+    ) -> bool:
+        if report_id:
+            self.report_id = report_id
+        if account_name:
+            self.account_name = account_name
+        object_key = f"{APP_ENV}/accounts/{self.account_name}/results/{self.report_id}/full-report.json"
+        return services.aws.object_exists(object_key)
+
     def load(
         self, report_id: Union[str, None] = None, account_name: Union[str, None] = None
     ) -> Union["FullReport", None]:
@@ -484,15 +482,15 @@ class FullReport(ReportSummary, DAL):
         return self
 
     def save(self) -> bool:
-        results: list[bool] = []
         object_key = f"{APP_ENV}/accounts/{self.account_name}/results/{self.report_id}/full-report.json"
-        results.append(
-            services.aws.store_s3(
-                object_key,
-                json.dumps(self.dict(), default=str),
-            )
+        return services.aws.store_s3(
+            object_key,
+            json.dumps(self.dict(), default=str),
         )
-        return all(results)
+
+    def delete(self) -> bool:
+        object_key = f"{APP_ENV}/accounts/{self.account_name}/results/{self.report_id}/full-report.json"
+        return services.aws.delete_s3(object_key)
 
 
 class ComplianceChartItem(BaseModel):

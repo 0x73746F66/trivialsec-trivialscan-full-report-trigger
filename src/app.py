@@ -18,6 +18,7 @@ def handler(event, context):
 
     _, _, account_name, *_ = trigger_object.split("/")
     reports = []
+    summaries = []
     object_paths = []
     prefix_key = f"{internals.APP_ENV}/accounts/{account_name}/results/"
     try:
@@ -37,11 +38,41 @@ def handler(event, context):
             ),
         ).load()
         reports.append(report)
+        summaries.append(internals.ReportSummary(**report.dict()))
 
+
+    _repair_history(account_name, summaries)
     _graphing_data(account_name, reports)
     _findings_data(account_name, reports)
     _certificate_issues(account_name, reports)
 
+
+def _repair_history(account_name: str, summaries: list[internals.ReportSummary]):
+    """
+    Sometime concurrent scans occur that will have a race condition when
+    saving the summary into the scan history, this is a retrospective fix
+    """
+    object_key = f"{internals.APP_ENV}/accounts/{account_name}/scanner-record.json"
+    raw = services.aws.get_s3(path_key=object_key)
+    try:
+        data = json.loads(raw)
+    except json.decoder.JSONDecodeError as err:
+        internals.logger.debug(err, exc_info=True)
+        return
+
+    summaries.sort(key=lambda item: item.date)
+    recent = summaries[-1]
+    for _report in data['history']:
+        report = internals.ReportSummary(**_report)
+        if report.date > recent.date:
+            summaries.append(report)
+    original_size = len(data['history'])
+    data['history'] = [summary.dict() for summary in summaries]
+    if original_size < len(data['history']):
+        services.aws.store_s3(
+            object_key,
+            json.dumps(data, default=str)
+        )
 
 def _certificate_issues(account_name: str, reports: list[internals.FullReport]):
     """
