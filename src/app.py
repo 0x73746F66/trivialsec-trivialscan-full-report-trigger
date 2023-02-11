@@ -1,6 +1,7 @@
 import json
 
 import internals
+import models
 import services.aws
 
 
@@ -31,14 +32,14 @@ def handler(event, context):
     for object_key in object_paths:
         if not object_key.endswith("full-report.json"):
             continue
-        report = internals.FullReport(
+        report = models.FullReport(
             account_name=account_name,
             report_id=object_key.replace(prefix_key, "").replace(
                 "/full-report.json", ""
             ),
         ).load()
         reports.append(report)
-        summaries.append(internals.ReportSummary(**report.dict()))
+        summaries.append(models.ReportSummary(**report.dict()))
 
 
     _repair_history(account_name, summaries)
@@ -47,13 +48,17 @@ def handler(event, context):
     _certificate_issues(account_name, reports)
 
 
-def _repair_history(account_name: str, summaries: list[internals.ReportSummary]):
+def _repair_history(account_name: str, summaries: list[models.ReportSummary]):
     """
     Sometime concurrent scans occur that will have a race condition when
     saving the summary into the scan history, this is a retrospective fix
     """
     object_key = f"{internals.APP_ENV}/accounts/{account_name}/scanner-record.json"
     raw = services.aws.get_s3(path_key=object_key)
+    if not raw:
+        internals.logger.warning(f"No scanner records for account {account_name}")
+        return
+
     try:
         data = json.loads(raw)
     except json.decoder.JSONDecodeError as err:
@@ -63,7 +68,7 @@ def _repair_history(account_name: str, summaries: list[internals.ReportSummary])
     summaries.sort(key=lambda item: item.date)
     recent = summaries[-1]
     for _report in data['history']:
-        report = internals.ReportSummary(**_report)
+        report = models.ReportSummary(**_report)
         if report.date > recent.date:
             summaries.append(report)
     original_size = len(data['history'])
@@ -74,13 +79,13 @@ def _repair_history(account_name: str, summaries: list[internals.ReportSummary])
             json.dumps(data, default=str)
         )
 
-def _certificate_issues(account_name: str, reports: list[internals.FullReport]):
+def _certificate_issues(account_name: str, reports: list[models.FullReport]):
     """
     Retrieves a collection of your own Trivial Scanner reports, providing
     a list of certificate issues filtered to include only the highest risk
     and ordered by last seen
     """
-    full_data: list[internals.EvaluationItem] = []
+    full_data: list[models.EvaluationItem] = []
     for report in reports:
         for item in report.evaluations or []:
             if (
@@ -92,16 +97,16 @@ def _certificate_issues(account_name: str, reports: list[internals.FullReport]):
             if not item.observed_at:
                 item.observed_at = report.date
             if item.cvss2:
-                item.references.append(internals.ReferenceItem(name=f"CVSSv2 {item.cvss2}", url=f"https://nvd.nist.gov/vuln-metrics/cvss/v2-calculator?vector=({item.cvss2})"))  # type: ignore
+                item.references.append(models.ReferenceItem(name=f"CVSSv2 {item.cvss2}", url=f"https://nvd.nist.gov/vuln-metrics/cvss/v2-calculator?vector=({item.cvss2})"))  # type: ignore
             if item.cvss3:
-                item.references.append(internals.ReferenceItem(name=f"CVSSv3.1 {item.cvss3}", url=f"https://nvd.nist.gov/vuln-metrics/cvss/v3-calculator?version=3.1&vector={item.cvss3}"))  # type: ignore
+                item.references.append(models.ReferenceItem(name=f"CVSSv3.1 {item.cvss3}", url=f"https://nvd.nist.gov/vuln-metrics/cvss/v3-calculator?version=3.1&vector={item.cvss3}"))  # type: ignore
             if item.cve:
                 for cve in item.cve:
-                    item.references.append(internals.ReferenceItem(name=cve, url=f"https://nvd.nist.gov/vuln/detail/{cve}"))  # type: ignore
+                    item.references.append(models.ReferenceItem(name=cve, url=f"https://nvd.nist.gov/vuln/detail/{cve}"))  # type: ignore
             full_data.append(item)
 
-    priority_data: list[internals.EvaluationItem] = sorted(full_data, key=lambda x: x.score)  # type: ignore
-    uniq_data: list[internals.EvaluationItem] = []
+    priority_data: list[models.EvaluationItem] = sorted(full_data, key=lambda x: x.score)  # type: ignore
+    uniq_data: list[models.EvaluationItem] = []
     seen = set()
     for item in priority_data:
         if item.key.startswith("trust_android_"):
@@ -123,13 +128,13 @@ def _certificate_issues(account_name: str, reports: list[internals.FullReport]):
         internals.logger.exception(err)
 
 
-def _findings_data(account_name: str, reports: list[internals.FullReport]):
+def _findings_data(account_name: str, reports: list[models.FullReport]):
     """
     Retrieves a collection of your own Trivial Scanner reports, providing
     a list of host findings filtered to include only the highest risk issues
     and ordered by last seen
     """
-    full_data: list[internals.EvaluationItem] = []
+    full_data: list[models.EvaluationItem] = []
     for report in reports:
         for item in report.evaluations or []:
             if (
@@ -141,16 +146,16 @@ def _findings_data(account_name: str, reports: list[internals.FullReport]):
             if not item.observed_at:
                 item.observed_at = report.date
             if item.cvss2:
-                item.references.append(internals.ReferenceItem(name=f"CVSSv2 {item.cvss2}", url=f"https://nvd.nist.gov/vuln-metrics/cvss/v2-calculator?vector=({item.cvss2})"))  # type: ignore
+                item.references.append(models.ReferenceItem(name=f"CVSSv2 {item.cvss2}", url=f"https://nvd.nist.gov/vuln-metrics/cvss/v2-calculator?vector=({item.cvss2})"))  # type: ignore
             if item.cvss3:
-                item.references.append(internals.ReferenceItem(name=f"CVSSv3.1 {item.cvss3}", url=f"https://nvd.nist.gov/vuln-metrics/cvss/v3-calculator?version=3.1&vector={item.cvss3}"))  # type: ignore
+                item.references.append(models.ReferenceItem(name=f"CVSSv3.1 {item.cvss3}", url=f"https://nvd.nist.gov/vuln-metrics/cvss/v3-calculator?version=3.1&vector={item.cvss3}"))  # type: ignore
             if item.cve:
                 for cve in item.cve:
-                    item.references.append(internals.ReferenceItem(name=cve, url=f"https://nvd.nist.gov/vuln/detail/{cve}"))  # type: ignore
+                    item.references.append(models.ReferenceItem(name=cve, url=f"https://nvd.nist.gov/vuln/detail/{cve}"))  # type: ignore
             full_data.append(item)
 
-    priority_data: list[internals.EvaluationItem] = sorted(full_data, key=lambda x: x.score)  # type: ignore
-    uniq_data: list[internals.EvaluationItem] = []
+    priority_data: list[models.EvaluationItem] = sorted(full_data, key=lambda x: x.score)  # type: ignore
+    uniq_data: list[models.EvaluationItem] = []
     seen = set()
     for item in priority_data:
         target = f"{item.transport.hostname}{item.transport.port}{item.transport.peer_address}{item.key}"  # type: ignore
@@ -168,23 +173,23 @@ def _findings_data(account_name: str, reports: list[internals.FullReport]):
         internals.logger.exception(err)
 
 
-def _graphing_data(account_name: str, reports: list[internals.FullReport]):
+def _graphing_data(account_name: str, reports: list[models.FullReport]):
     charts = []
     results = []
     chart_data = {
-        internals.GraphLabel.PCIDSS3: {"week": [], "month": [], "year": []},
-        internals.GraphLabel.PCIDSS4: {"week": [], "month": [], "year": []},
-        internals.GraphLabel.NISTSP800_131A_STRICT: {
+        models.GraphLabel.PCIDSS3: {"week": [], "month": [], "year": []},
+        models.GraphLabel.PCIDSS4: {"week": [], "month": [], "year": []},
+        models.GraphLabel.NISTSP800_131A_STRICT: {
             "week": [],
             "month": [],
             "year": [],
         },
-        internals.GraphLabel.NISTSP800_131A_TRANSITION: {
+        models.GraphLabel.NISTSP800_131A_TRANSITION: {
             "week": [],
             "month": [],
             "year": [],
         },
-        internals.GraphLabel.FIPS1402: {"week": [], "month": [], "year": []},
+        models.GraphLabel.FIPS1402: {"week": [], "month": [], "year": []},
     }
     _data = {"week": 0, "month": 0, "year": 0}
     for report in reports:
@@ -194,38 +199,38 @@ def _graphing_data(account_name: str, reports: list[internals.FullReport]):
             if item.result_level == "pass":
                 continue
             for compliance in item.compliance:
-                if compliance.compliance == internals.ComplianceName.PCI_DSS:
+                if compliance.compliance == models.ComplianceName.PCI_DSS:
                     if compliance.version == "3.2.1":
                         cur_results.setdefault(
-                            internals.GraphLabel.PCIDSS3, _data.copy()
+                            models.GraphLabel.PCIDSS3, _data.copy()
                         )
-                        cur_results[internals.GraphLabel.PCIDSS3][range_group] += 1
+                        cur_results[models.GraphLabel.PCIDSS3][range_group] += 1
                     if compliance.version == "4.0":
                         cur_results.setdefault(
-                            internals.GraphLabel.PCIDSS4, _data.copy()
+                            models.GraphLabel.PCIDSS4, _data.copy()
                         )
-                        cur_results[internals.GraphLabel.PCIDSS4][range_group] += 1
-                if compliance.compliance == internals.ComplianceName.NIST_SP800_131A:
+                        cur_results[models.GraphLabel.PCIDSS4][range_group] += 1
+                if compliance.compliance == models.ComplianceName.NIST_SP800_131A:
                     if compliance.version == "strict mode":
                         cur_results.setdefault(
-                            internals.GraphLabel.NISTSP800_131A_STRICT, _data.copy()
+                            models.GraphLabel.NISTSP800_131A_STRICT, _data.copy()
                         )
-                        cur_results[internals.GraphLabel.NISTSP800_131A_STRICT][
+                        cur_results[models.GraphLabel.NISTSP800_131A_STRICT][
                             range_group
                         ] += 1
                     if compliance.version == "transition mode":
                         cur_results.setdefault(
-                            internals.GraphLabel.NISTSP800_131A_TRANSITION, _data.copy()
+                            models.GraphLabel.NISTSP800_131A_TRANSITION, _data.copy()
                         )
-                        cur_results[internals.GraphLabel.NISTSP800_131A_TRANSITION][
+                        cur_results[models.GraphLabel.NISTSP800_131A_TRANSITION][
                             range_group
                         ] += 1
                 if (
-                    compliance.compliance == internals.ComplianceName.FIPS_140_2
+                    compliance.compliance == models.ComplianceName.FIPS_140_2
                     and compliance.version == "Annex A"
                 ):
-                    cur_results.setdefault(internals.GraphLabel.FIPS1402, _data.copy())
-                    cur_results[internals.GraphLabel.FIPS1402][range_group] += 1
+                    cur_results.setdefault(models.GraphLabel.FIPS1402, _data.copy())
+                    cur_results[models.GraphLabel.FIPS1402][range_group] += 1
         results.append(cur_results)
 
     agg_sums = {}
@@ -245,7 +250,7 @@ def _graphing_data(account_name: str, reports: list[internals.FullReport]):
                 group_name, timestamp = group_key
                 if sum(sum_arr) > 0:
                     chart_data[c][r].append(
-                        internals.ComplianceChartItem(
+                        models.ComplianceChartItem(
                             name=group_name,
                             num=sum(sum_arr),
                             timestamp=timestamp,
@@ -258,7 +263,7 @@ def _graphing_data(account_name: str, reports: list[internals.FullReport]):
                 ranges.add(r)
 
         charts.append(
-            internals.DashboardCompliance(label=c, ranges=list(ranges), data=d)
+            models.DashboardCompliance(label=c, ranges=list(ranges), data=d)
         )
 
     try:

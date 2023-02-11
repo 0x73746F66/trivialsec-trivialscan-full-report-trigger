@@ -27,7 +27,7 @@
                     "arn": "arn:aws:s3:::trivialscan-dashboard-store"
                 },
                 "object": {
-                    "key": "Dev/accounts/testing/results/S1j0_s8f3J2A6xTzAzOGdI2vANuU3pywCD0R1FX9UuDEzh3IqpH4IhmKI4shEUGgqHiB8EB5mUI/full-report.json",
+                    "key": "Dev/accounts/trivialsec-dev/results/S1j0_s8f3J2A6xTzAzOGdI2vANuU3pywCD0R1FX9UuDEzh3IqpH4IhmKI4shEUGgqHiB8EB5mUI/full-report.json",
                     "size": 1024,
                     "eTag": "0123456789abcdef0123456789abcdef",
                     "sequencer": "0A1B2C3D4E5F678901"

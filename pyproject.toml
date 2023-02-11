@@ -37,3 +37,6 @@ disable = [
 
 [tool.pylint.'MESSAGES CONTROL']
 extension-pkg-whitelist = "pydantic"
+
+[project.scripts]
+run = "run:run"
