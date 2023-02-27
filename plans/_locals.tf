@@ -4,8 +4,6 @@ locals {
     python_version        = "python3.9"
     source_file           = "${lower(var.app_env)}-${var.app_name}.zip"
     function_name         = "${lower(var.app_env)}-trivialscan-dashboard-compliance-graphs"
-    timeout               = 900
-    memory_size           = 1024
     tags                  = {
         ProjectName = "trivialscan"
         ProjectLeadEmail = "chris@trivialsec.com"
@@ -13,4 +11,7 @@ locals {
         SecurityTags = "customer-data"
         AutomationTool = "Terraform"
     }
+    timeout               = 900
+    memory_size           = 1024
+    retention_in_days     = var.app_env == "Prod" ? 30 : 7
 }

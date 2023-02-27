@@ -31,3 +31,9 @@ resource "aws_lambda_permission" "allow_bucket" {
   principal     = "s3.amazonaws.com"
   source_arn    = "arn:aws:s3:::${data.terraform_remote_state.trivialscan_s3.outputs.trivialscan_store_bucket[0]}"
 }
+
+resource "aws_cloudwatch_log_group" "compliance_graph_logs" {
+  skip_destroy      = var.app_env == "Prod"
+  name              = "/aws/lambda/${aws_lambda_function.dashboard_compliance_graphs.function_name}"
+  retention_in_days = local.retention_in_days
+}
