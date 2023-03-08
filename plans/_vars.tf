@@ -13,9 +13,9 @@ variable "app_env" {
   default     = "Dev"
 }
 variable "app_name" {
-  description = "default trivialscan-dashboard-compliance-graphs"
+  description = "default trivialscan-full-report-trigger"
   type        = string
-  default     = "trivialscan-dashboard-compliance-graphs"
+  default     = "trivialscan-full-report-trigger"
 }
 variable "build_env" {
   description = "BUILD_ENV"

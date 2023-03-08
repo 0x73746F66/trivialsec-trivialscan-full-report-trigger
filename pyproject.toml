@@ -3,9 +3,9 @@ requires = ["setuptools>=46.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "trivialscan-dashboard-compliance-graphs"
+name = "trivialscan-full-report-trigger"
 version = "1.0.0"
-description = "Trivial Scanner Dashboard Compliance Graph data generator"
+description = "Trivial Scanner Dashboard Compliance Graph data generator, and Lambda trigger for full-report.json S3 objects"
 authors = [
     {name = "Christopher Langton", email = "chris@trivialsec.com"},
 ]
@@ -17,6 +17,7 @@ dependencies = [
     "retry == 0.9.2",
     "pydantic == 1.9.2",
     "validators == 0.20.0",
+    "sendgrid == 6.9.7",
 ]
 
 [tool.coverage.run]

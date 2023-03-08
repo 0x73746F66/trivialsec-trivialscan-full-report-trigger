@@ -1,6 +1,6 @@
-data "aws_iam_policy_document" "dashboard_compliance_graphs_assume_role_policy" {
+data "aws_iam_policy_document" "full_report_trigger_assume_role_policy" {
   statement {
-    sid = "${var.app_env}DashboardComplianceGraphsAssumeRole"
+    sid = "${var.app_env}FullReportTriggerAssumeRole"
     actions    = ["sts:AssumeRole"]
     principals {
       type        = "Service"
@@ -8,9 +8,9 @@ data "aws_iam_policy_document" "dashboard_compliance_graphs_assume_role_policy" 
     }
   }
 }
-data "aws_iam_policy_document" "dashboard_compliance_graphs_iam_policy" {
+data "aws_iam_policy_document" "full_report_trigger_iam_policy" {
   statement {
-    sid = "${var.app_env}DashboardComplianceGraphsLogging"
+    sid = "${var.app_env}FullReportTriggerLogging"
     actions   = [
       "logs:CreateLogGroup",
       "logs:CreateLogStream",
@@ -21,7 +21,7 @@ data "aws_iam_policy_document" "dashboard_compliance_graphs_iam_policy" {
     ]
   }
   statement {
-    sid = "${var.app_env}DashboardComplianceGraphsObjList"
+    sid = "${var.app_env}FullReportTriggerObjList"
     actions   = [
       "s3:Head*",
       "s3:List*",
@@ -32,7 +32,7 @@ data "aws_iam_policy_document" "dashboard_compliance_graphs_iam_policy" {
     ]
   }
   statement {
-    sid = "${var.app_env}DashboardComplianceGraphsObjAccess"
+    sid = "${var.app_env}FullReportTriggerObjAccess"
     actions   = [
       "s3:DeleteObject",
       "s3:GetObject",
@@ -42,20 +42,49 @@ data "aws_iam_policy_document" "dashboard_compliance_graphs_iam_policy" {
       "arn:aws:s3:::${data.terraform_remote_state.trivialscan_s3.outputs.trivialscan_store_bucket[0]}/${var.app_env}/*",
     ]
   }
+  statement {
+    sid = "${var.app_env}FullReportTriggerSecrets"
+    actions   = [
+      "ssm:GetParameter",
+    ]
+    resources = [
+      "arn:aws:ssm:${local.aws_default_region}:${local.aws_master_account_id}:parameter/${var.app_env}/${var.app_name}/*",
+    ]
+  }
+  statement {
+    sid = "${var.app_env}FullReportTriggerDynamoDB"
+    actions   = [
+      "dynamodb:PutItem",
+      "dynamodb:GetItem",
+      "dynamodb:DeleteItem"
+    ]
+    resources = [
+      "arn:aws:dynamodb:${local.aws_default_region}:${local.aws_master_account_id}:table/${lower(var.app_env)}_findings",
+    ]
+  }
+  statement {
+    sid = "${var.app_env}FullReportTriggerDynamoDBQuery"
+    actions   = [
+      "dynamodb:Query"
+    ]
+    resources = [
+      "arn:aws:dynamodb:${local.aws_default_region}:${local.aws_master_account_id}:table/${lower(var.app_env)}_findings/*",
+    ]
+  }
 }
-resource "aws_iam_role" "dashboard_compliance_graphs_role" {
-  name               = "${lower(var.app_env)}_dashboard_compliance_graphs_lambda_role"
-  assume_role_policy = data.aws_iam_policy_document.dashboard_compliance_graphs_assume_role_policy.json
+resource "aws_iam_role" "full_report_trigger_role" {
+  name               = "${lower(var.app_env)}_full_report_trigger_lambda_role"
+  assume_role_policy = data.aws_iam_policy_document.full_report_trigger_assume_role_policy.json
   lifecycle {
     create_before_destroy = true
   }
 }
-resource "aws_iam_policy" "dashboard_compliance_graphs_policy" {
-  name        = "${lower(var.app_env)}_dashboard_compliance_graphs_lambda_policy"
+resource "aws_iam_policy" "full_report_trigger_policy" {
+  name        = "${lower(var.app_env)}_full_report_trigger_lambda_policy"
   path        = "/"
-  policy      = data.aws_iam_policy_document.dashboard_compliance_graphs_iam_policy.json
+  policy      = data.aws_iam_policy_document.full_report_trigger_iam_policy.json
 }
 resource "aws_iam_role_policy_attachment" "policy_attach" {
-  role       = aws_iam_role.dashboard_compliance_graphs_role.name
-  policy_arn = aws_iam_policy.dashboard_compliance_graphs_policy.arn
+  role       = aws_iam_role.full_report_trigger_role.name
+  policy_arn = aws_iam_policy.full_report_trigger_policy.arn
 }

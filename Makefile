@@ -53,10 +53,10 @@ env:
 	@echo -e $(bold)$(primary)CI_BUILD_REF$(clear) = $(CI_BUILD_REF)
 
 output: env init
-	@echo -e $(bold)$(primary)dashboard_compliance_graphs_arn$(clear) = $(shell terraform -chdir=plans output dashboard_compliance_graphs_arn)
-	@echo -e $(bold)$(primary)dashboard_compliance_graphs_role$(clear) = $(shell terraform -chdir=plans output dashboard_compliance_graphs_role)
-	@echo -e $(bold)$(primary)dashboard_compliance_graphs_role_arn$(clear) = $(shell terraform -chdir=plans output dashboard_compliance_graphs_role_arn)
-	@echo -e $(bold)$(primary)dashboard_compliance_graphs_policy_arn$(clear) = $(shell terraform -chdir=plans output dashboard_compliance_graphs_policy_arn)
+	@echo -e $(bold)$(primary)full_report_trigger_arn$(clear) = $(shell terraform -chdir=plans output full_report_trigger_arn)
+	@echo -e $(bold)$(primary)full_report_trigger_role$(clear) = $(shell terraform -chdir=plans output full_report_trigger_role)
+	@echo -e $(bold)$(primary)full_report_trigger_role_arn$(clear) = $(shell terraform -chdir=plans output full_report_trigger_role_arn)
+	@echo -e $(bold)$(primary)full_report_trigger_policy_arn$(clear) = $(shell terraform -chdir=plans output full_report_trigger_policy_arn)
 
 build: env ## makes the lambda zip archive
 	./.$(BUILD_ENV)/bin/build-archive
@@ -114,4 +114,4 @@ local-runner: ## local setup for a gitlab runner
 		--executor shell
 
 tail-aws-logs: ## Install using pipx install awscliv2
-	awsv2 logs tail "/aws/lambda/$(shell sed -e 's/\(.*\)/\L\1/' <<< "${APP_ENV}")-trivialscan-dashboard-compliance-graphs" --follow
+	awsv2 logs tail "/aws/lambda/$(shell sed -e 's/\(.*\)/\L\1/' <<< "${APP_ENV}")-trivialscan-full-report-trigger" --follow

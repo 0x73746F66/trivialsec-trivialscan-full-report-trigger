@@ -1,13 +1,19 @@
+# pylint disable=invalid-name
 import json
+from uuid import uuid5
+from datetime import datetime, timezone
 
 import internals
 import models
 import services.aws
+import services.webhook
+import services.sendgrid
 
 
 def handler(event, context):
     trigger_object: str = event["Records"][0]["s3"]["object"]["key"]
     internals.logger.info(f"Triggered by {trigger_object}")
+    internals.logger.debug(f"raw {event}")
     if not trigger_object.startswith(internals.APP_ENV):
         internals.logger.critical(f"Wrong APP_ENV, expected {internals.APP_ENV}")
         return
@@ -18,12 +24,12 @@ def handler(event, context):
         return
 
     _, _, account_name, *_ = trigger_object.split("/")
-    # _process_issues(account_name, trigger_object)
+    prefix_key = f"{internals.APP_ENV}/accounts/{account_name}/results/"
+    _process_issues(account_name=account_name, report_id=trigger_object.replace(prefix_key, "").replace("/full-report.json", ""))
 
     reports = []
     summaries = []
     object_paths = []
-    prefix_key = f"{internals.APP_ENV}/accounts/{account_name}/results/"
     try:
         object_paths = services.aws.list_s3(prefix_key=prefix_key)
 
@@ -50,8 +56,69 @@ def handler(event, context):
     _certificate_issues(account_name, reports)
 
 
-def _process_issues(account_name: str, trigger_object: str):
-    pass
+def _process_issues(account_name: str, report_id: str):
+    report = models.FullReport(
+        account_name=account_name,
+        report_id=report_id,
+    )
+    if not report.load():
+        internals.logger.warning(f"Failed to load account_name {account_name} report_id {report_id}")
+        return
+    account = models.MemberAccount(name=account_name)
+    if not account.load():
+        internals.logger.warning(f"Failed to load account_name {account_name} report_id {report_id}")
+        return
+    for evaluation in report.evaluations:
+        finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}")
+        finding = models.Finding(
+            finding_id=finding_id,
+            **evaluation.dict()
+        )
+        new_finding = False
+        if not finding.load():
+            new_finding = True
+
+        finding.last_seen = datetime.now(tz=timezone.utc)
+        reports = set(finding.report_ids)
+        reports.add(report.report_id)
+        finding.report_ids = list(reports)
+        if evaluation.certificate:
+            webhook_event = models.WebhookEvent.NEW_FINDINGS_CERTIFICATES
+            subject_suffix = f"Certificate: {evaluation.certificate.subject}"
+            certificates = set(finding.certificates)
+            certificates.add(evaluation.certificate.sha1_fingerprint)
+            finding.certificates = list(certificates)
+        elif evaluation.transport.hostname:
+            webhook_event = models.WebhookEvent.NEW_FINDINGS_DOMAINS
+            subject_suffix = evaluation.transport.hostname
+            hosts = set(finding.hosts)
+            hosts.add(f"{evaluation.transport.hostname}:{evaluation.transport.port}")
+            finding.hosts = list(hosts)
+        if not finding.save():
+            internals.logger.warning(f"Failed to save finding_id {finding_id}")
+        if not new_finding:
+            continue
+
+        services.webhook.send(
+            event_name=webhook_event,
+            account=account,
+            data=finding.dict(),
+        )
+        if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
+            internals.logger.info("Emailing alert")
+            sendgrid = services.sendgrid.send_email(
+                subject=f"New Finding - {subject_suffix}",
+                recipient=account.primary_email,
+                template="new_finding",
+                data=finding.dict(),
+            )
+            if sendgrid._content:  # pylint: disable=protected-access
+                res = json.loads(
+                    sendgrid._content.decode()  # pylint: disable=protected-access
+                )
+                if isinstance(res, dict) and res.get("errors"):
+                    internals.logger.error(res.get("errors"))
+
 
 def _certificate_issues(account_name: str, reports: list[models.FullReport]):
     """
@@ -86,7 +153,7 @@ def _certificate_issues(account_name: str, reports: list[models.FullReport]):
         if item.key.startswith("trust_android_"):
             continue
 
-        key = item.key if not item.key.startswith("trust_") else "trust"
+        key = "trust" if item.key.startswith("trust_") else item.key
         target = f"{item.certificate.sha1_fingerprint}{key}"  # type: ignore
         if target not in seen:
             uniq_data.append(item)
@@ -173,26 +240,28 @@ def _graphing_data(account_name: str, reports: list[models.FullReport]):
             if item.result_level == "pass":
                 continue
             for compliance in item.compliance:
-                if compliance.compliance == models.ComplianceName.PCI_DSS:
-                    if compliance.version == "3.2.1":
+                if compliance.version == "3.2.1":
+                    if compliance.compliance == models.ComplianceName.PCI_DSS:
                         cur_results.setdefault(
                             models.GraphLabel.PCIDSS3, _data.copy()
                         )
                         cur_results[models.GraphLabel.PCIDSS3][range_group] += 1
-                    if compliance.version == "4.0":
+                elif compliance.version == "4.0":
+                    if compliance.compliance == models.ComplianceName.PCI_DSS:
                         cur_results.setdefault(
                             models.GraphLabel.PCIDSS4, _data.copy()
                         )
                         cur_results[models.GraphLabel.PCIDSS4][range_group] += 1
-                if compliance.compliance == models.ComplianceName.NIST_SP800_131A:
-                    if compliance.version == "strict mode":
+                elif compliance.version == "strict mode":
+                    if compliance.compliance == models.ComplianceName.NIST_SP800_131A:
                         cur_results.setdefault(
                             models.GraphLabel.NISTSP800_131A_STRICT, _data.copy()
                         )
                         cur_results[models.GraphLabel.NISTSP800_131A_STRICT][
                             range_group
                         ] += 1
-                    if compliance.version == "transition mode":
+                elif compliance.version == "transition mode":
+                    if compliance.compliance == models.ComplianceName.NIST_SP800_131A:
                         cur_results.setdefault(
                             models.GraphLabel.NISTSP800_131A_TRANSITION, _data.copy()
                         )
@@ -208,7 +277,7 @@ def _graphing_data(account_name: str, reports: list[models.FullReport]):
         results.append(cur_results)
 
     agg_sums = {}
-    for c, _ in chart_data.items():
+    for c in chart_data:
         agg_sums.setdefault(c, {})
         for r in ["week", "month", "year"]:
             agg_sums[c].setdefault(r, {})
@@ -231,11 +300,7 @@ def _graphing_data(account_name: str, reports: list[models.FullReport]):
                         )
                     )
     for c, d in chart_data.items():
-        ranges = set()
-        for r in ["week", "month", "year"]:
-            if d[r]:
-                ranges.add(r)
-
+        ranges = {r for r in ["week", "month", "year"] if d[r]}
         charts.append(
             models.DashboardCompliance(label=c, ranges=list(ranges), data=d)
         )

@@ -1,12 +1,12 @@
-output "dashboard_compliance_graphs_arn" {
-    value = aws_lambda_function.dashboard_compliance_graphs.arn
+output "full_report_trigger_arn" {
+    value = aws_lambda_function.full_report_trigger.arn
 }
-output "dashboard_compliance_graphs_role" {
-  value = aws_iam_role.dashboard_compliance_graphs_role.name
+output "full_report_trigger_role" {
+  value = aws_iam_role.full_report_trigger_role.name
 }
-output "dashboard_compliance_graphs_role_arn" {
-  value = aws_iam_role.dashboard_compliance_graphs_role.arn
+output "full_report_trigger_role_arn" {
+  value = aws_iam_role.full_report_trigger_role.arn
 }
-output "dashboard_compliance_graphs_policy_arn" {
-  value = aws_iam_policy.dashboard_compliance_graphs_policy.arn
+output "full_report_trigger_policy_arn" {
+  value = aws_iam_policy.full_report_trigger_policy.arn
 }

@@ -3,7 +3,7 @@ locals {
     aws_default_region    = "ap-southeast-2"
     python_version        = "python3.9"
     source_file           = "${lower(var.app_env)}-${var.app_name}.zip"
-    function_name         = "${lower(var.app_env)}-trivialscan-dashboard-compliance-graphs"
+    function_name         = "${lower(var.app_env)}-trivialscan-full-report-trigger"
     tags                  = {
         ProjectName = "trivialscan"
         ProjectLeadEmail = "chris@trivialsec.com"

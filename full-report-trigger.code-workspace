@@ -65,6 +65,7 @@
             "cachier",
             "CCADB",
             "fastapi",
+            "FIPS",
             "mkcert",
             "NOSONAR",
             "ondemand",
