@@ -17,9 +17,27 @@ from botocore.exceptions import (
 import internals
 
 STORE_BUCKET = getenv("STORE_BUCKET", "trivialscan-dashboard-store")
-ssm_client = boto3.client(service_name="ssm")
-s3_client = boto3.client(service_name="s3")
-sqs_client = boto3.client(service_name="sqs")
+AWS_REGION = getenv("AWS_REGION", "ap-southeast-2")
+if getenv("AWS_EXECUTION_ENV") is None:
+    boto3.setup_default_session(
+        profile_name=getenv("AWS_PROFILE_NAME"),
+        aws_access_key_id=getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=getenv("AWS_SECRET_ACCESS_KEY"),
+        aws_session_token=getenv("AWS_SESSION_TOKEN"),
+    )
+
+ssm_client = boto3.client(service_name="ssm", region_name=AWS_REGION)
+s3_client = boto3.client(service_name="s3", region_name=AWS_REGION)
+sqs_client = boto3.client(service_name="sqs", region_name=AWS_REGION)
+dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
+
+
+class Tables(str, Enum):
+    LOGIN_SESSIONS = f"{internals.APP_ENV.lower()}_login_sessions"
+    REPORT_HISTORY = f"{internals.APP_ENV.lower()}_report_history"
+    OBSERVED_IDENTIFIERS = f"{internals.APP_ENV.lower()}_observed_identifiers"
+    EARLY_WARNING_SERVICE = f"{internals.APP_ENV.lower()}_early_warning_service"
+    MEMBER_FIDO = f"{internals.APP_ENV.lower()}_member_fido"
 
 
 class StorageClass(str, Enum):
@@ -70,9 +88,9 @@ def get_ssm(parameter: str, default: Any = None, **kwargs) -> Any:
     try:
         response = ssm_client.get_parameter(Name=parameter, **kwargs)
         return (
-            default
-            if not isinstance(response, dict)
-            else response.get("Parameter", {}).get("Value", default)
+            response.get("Parameter", {}).get("Value", default)
+            if isinstance(response, dict)
+            else default
         )
     except ClientError as err:
         if err.response["Error"]["Code"] == "ParameterNotFound":  # type: ignore
@@ -102,9 +120,7 @@ def store_ssm(parameter: str, value: str, **kwargs) -> bool:
     try:
         response = ssm_client.put_parameter(Name=parameter, Value=value, **kwargs)
         return (
-            False
-            if not isinstance(response, dict)
-            else response.get("Version") is not None
+            response.get("Version") is not None if isinstance(response, dict) else False
         )
     except ClientError as err:
         if err.response["Error"]["Code"] == "ParameterAlreadyExists":  # type: ignore
@@ -154,7 +170,7 @@ def list_s3(prefix_key: str, bucket_name: str = STORE_BUCKET) -> list[str]:
     while next_token is not None:
         args = base_kwargs.copy()
         if next_token != "":
-            args.update({"ContinuationToken": next_token})
+            args["ContinuationToken"] = next_token
         try:
             results = s3_client.list_objects_v2(**args)
 
@@ -177,6 +193,59 @@ def list_s3(prefix_key: str, bucket_name: str = STORE_BUCKET) -> list[str]:
         next_token = results.get("NextContinuationToken")
 
     return keys
+
+
+@retry(
+    (
+        ConnectionClosedError,
+        ReadTimeoutError,
+        ConnectTimeoutError,
+        CapacityNotAvailableError,
+    ),
+    tries=3,
+    delay=1.5,
+    backoff=1,
+)
+def list_s3_objects(prefix_key: str, bucket_name: str = STORE_BUCKET) -> list[str]:
+    """
+    params:
+    - bucket_name: s3 bucket with target contents
+    - prefix_key: pattern to match in s3
+    """
+    internals.logger.info(f"list_s3 key prefix {prefix_key}")
+    items = []
+    next_token = ""
+    base_kwargs = {
+        "Bucket": bucket_name,
+        "Prefix": prefix_key,
+    }
+    base_kwargs.update()
+    while next_token is not None:
+        args = base_kwargs.copy()
+        if next_token != "":
+            args["ContinuationToken"] = next_token
+        try:
+            results = s3_client.list_objects_v2(**args)
+
+        except ClientError as err:
+            if err.response["Error"]["Code"] == "NoSuchBucket":  # type: ignore
+                internals.logger.error(
+                    f"The requested bucket {bucket_name} was not found"
+                )
+            elif err.response["Error"]["Code"] == "InvalidObjectState":  # type: ignore
+                internals.logger.error(f"The request was invalid due to: {err}")
+            elif err.response["Error"]["Code"] == "InvalidParameterException":  # type: ignore
+                internals.logger.error(f"The request had invalid params: {err}")
+            else:
+                internals.logger.exception(err)
+            return []
+        for item in results.get("Contents", []):
+            k = item["Key"]  # type: ignore
+            if k[-1] != "/":
+                items.append(item)
+        next_token = results.get("NextContinuationToken")
+
+    return items
 
 
 @retry(
@@ -225,7 +294,7 @@ def delete_s3(path_key: str, bucket_name: str = STORE_BUCKET, **kwargs) -> bool:
     internals.logger.info(f"delete_s3 object key {path_key}")
     try:
         response = s3_client.delete_object(Bucket=bucket_name, Key=path_key, **kwargs)
-        return False if not isinstance(response, dict) else response.get("DeleteMarker")
+        return response.get("DeleteMarker") if isinstance(response, dict) else False
 
     except ClientError as err:
         if err.response["Error"]["Code"] == "NoSuchKey":  # type: ignore
@@ -254,7 +323,7 @@ def delete_s3(path_key: str, bucket_name: str = STORE_BUCKET, **kwargs) -> bool:
 )
 def store_s3(
     path_key: str,
-    value: str,
+    value: Union[str, bytes],
     bucket_name: str = STORE_BUCKET,
     storage_class: StorageClass = StorageClass.STANDARD_IA,
     **kwargs,
@@ -269,11 +338,7 @@ def store_s3(
             StorageClass=str(storage_class.name),  # type: ignore
             **kwargs,
         )
-        return (
-            False
-            if not isinstance(response, dict)
-            else response.get("ETag") is not None
-        )
+        return response.get("ETag") is not None if isinstance(response, dict) else False
     except ClientError as err:
         if err.response["Error"]["Code"] == "ParameterAlreadyExists":  # type: ignore
             internals.logger.warning(
@@ -340,7 +405,8 @@ def store_sqs(
     message_group_id: Union[str, None] = None,
     **kwargs,
 ) -> bool:
-    internals.logger.info(f"storing {queue_name} message {message_body}")
+    internals.logger.info(f"storing {queue_name}")
+    internals.logger.debug(f"message {message_body}")
     if queue_name.endswith(".fifo"):
         if deduplicate and not deduplication_id:
             deduplication_id = sha256(message_body.encode()).hexdigest()
@@ -365,9 +431,9 @@ def store_sqs(
 
         response = sqs_client.send_message(**params)
         return (
-            False
-            if not isinstance(response, dict)
-            else response.get("MessageId") is not None
+            response.get("MessageId") is not None
+            if isinstance(response, dict)
+            else False
         )
     except ClientError as err:
         if err.response["Error"]["Code"] == "InvalidMessageContents":  # type: ignore
@@ -377,3 +443,111 @@ def store_sqs(
         else:
             internals.logger.exception(err)
     return False
+
+
+@retry(
+    (
+        ConnectionClosedError,
+        ReadTimeoutError,
+        ConnectTimeoutError,
+        CapacityNotAvailableError,
+    ),
+    tries=3,
+    delay=1.5,
+    backoff=1,
+)
+def get_dynamodb(
+    item_key: dict, table_name: Tables, default: Any = None
+) -> Union[dict, None]:
+    internals.logger.info(f"get_dynamodb table: {table_name.value}")
+    internals.logger.debug(f"item_key: {item_key}")
+    try:
+        table = dynamodb.Table(table_name.value)
+        response = table.get_item(Key=item_key)
+        internals.logger.debug(response)
+        return response.get("Item", default)
+
+    except Exception as err:
+        internals.logger.exception(err)
+    return default
+
+
+@retry(
+    (
+        ConnectionClosedError,
+        ReadTimeoutError,
+        ConnectTimeoutError,
+        CapacityNotAvailableError,
+    ),
+    tries=3,
+    delay=1.5,
+    backoff=1,
+)
+def put_dynamodb(item: dict, table_name: Tables) -> bool:
+    internals.logger.info(f"put_dynamodb table: {table_name.value}")
+    internals.logger.debug(f"item: {item}")
+    try:
+        raw = json.dumps(item, cls=internals.JSONEncoder)
+        data = json.loads(raw, parse_float=str, parse_int=str)
+    except json.JSONDecodeError as err:
+        internals.logger.error(err, exc_info=True)
+        return False
+    try:
+        table = dynamodb.Table(table_name.value)
+        response = table.put_item(Item=data)
+        return response.get("ResponseMetadata", {}).get("RequestId") is not None
+
+    except Exception as err:
+        internals.logger.exception(err)
+        internals.logger.info(f"data: {data}")
+    return False
+
+
+@retry(
+    (
+        ConnectionClosedError,
+        ReadTimeoutError,
+        ConnectTimeoutError,
+        CapacityNotAvailableError,
+    ),
+    tries=3,
+    delay=1.5,
+    backoff=1,
+)
+def delete_dynamodb(item_key: dict, table_name: Tables) -> bool:
+    internals.logger.info(f"get_dynamodb table: {table_name.value}")
+    internals.logger.debug(f"item_key: {item_key}")
+    try:
+        table = dynamodb.Table(table_name.value)
+        response = table.delete_item(Key=item_key)
+        internals.logger.debug(response)
+        return response.get("ResponseMetadata", {}).get("RequestId") is not None
+
+    except Exception as err:
+        internals.logger.exception(err)
+    return False
+
+
+@retry(
+    (
+        ConnectionClosedError,
+        ReadTimeoutError,
+        ConnectTimeoutError,
+        CapacityNotAvailableError,
+    ),
+    tries=3,
+    delay=1.5,
+    backoff=1,
+)
+def query_dynamodb(table_name: Tables, **kwargs) -> list[dict]:
+    internals.logger.info(f"query_dynamodb table: {table_name.value}")
+    internals.logger.debug(f"arguments: {kwargs}")
+    try:
+        table = dynamodb.Table(table_name.value)
+        response = table.query(**kwargs)
+        internals.logger.debug(response)
+        return response.get("Items", [])
+
+    except Exception as err:
+        internals.logger.exception(err)
+    return []
