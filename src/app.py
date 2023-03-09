@@ -51,9 +51,9 @@ def handler(event, context):
         reports.append(report)
         summaries.append(models.ReportSummary(**report.dict()))
 
-    # _graphing_data(account_name, reports)
-    # _findings_data(account_name, reports)
-    # _certificate_issues(account_name, reports)
+    _graphing_data(account_name, reports)
+    _findings_data(account_name, reports)
+    _certificate_issues(account_name, reports)
 
 
 def _process_issues(account_name: str, report_id: str):
@@ -62,21 +62,23 @@ def _process_issues(account_name: str, report_id: str):
         report_id=report_id,
     )
     if not report.load():
-        internals.logger.warning(f"Failed to load account_name {account_name} report_id {report_id}")
+        internals.logger.warning(f"Failed to load account_name {account_name} report {report_id}")
         return
     account = models.MemberAccount(name=account_name)
     if not account.load():
-        internals.logger.warning(f"Failed to load account_name {account_name} report_id {report_id}")
+        internals.logger.warning(f"Failed to load account {account_name} report_id {report_id}")
         return
+
+    digest = []
     for evaluation in report.evaluations:
         if evaluation.certificate:
             finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}{evaluation.certificate.sha1_fingerprint}")
             webhook_event = models.WebhookEvent.NEW_FINDINGS_CERTIFICATES
-            subject_suffix = f"Certificate: {evaluation.certificate.subject}"
+
         elif evaluation.transport.hostname:
             finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}{evaluation.transport.hostname}{evaluation.transport.port}")
             webhook_event = models.WebhookEvent.NEW_FINDINGS_DOMAINS
-            subject_suffix = evaluation.transport.hostname
+
         else:
             internals.logger.error(f"Invalid EvaluationItem {evaluation}")
             continue
@@ -87,27 +89,59 @@ def _process_issues(account_name: str, report_id: str):
         )
         new_finding = False
         if not finding.load():
-            finding.is_warning = evaluation.result_level == 'warn'
-            finding.is_vulnerable = evaluation.result_level == 'fail' and (
-                evaluation.result_label.lower() in ["compromised", "vulnerable", "revoked", "expired"]
-                or evaluation.result_label.lower().startswith("compromised")
-            )
             new_finding = True
 
-        new_occurrence = True
+        skip_occurrence = new_finding and evaluation.result_level == "pass"
+        matched = False
+        now_remediated = False
+        now_regressed = False
         for occurrence in finding.occurrences:
             if evaluation.certificate and occurrence.certificate_sha1 == evaluation.certificate.sha1_fingerprint:
                 occurrence.last_seen = datetime.now(tz=timezone.utc)
                 occurrence.report_ids.append(report.report_id)
-                new_occurrence = False
-                break
+                matched = True
+
             if occurrence.hostname == evaluation.transport.hostname and occurrence.port == evaluation.transport.port:
                 occurrence.last_seen = datetime.now(tz=timezone.utc)
                 occurrence.report_ids.append(report.report_id)
-                new_occurrence = False
+                matched = True
+
+            if matched:
+                if evaluation.result_level == "pass" and occurrence.status == models.FindingStatus.REMEDIATED:
+                    skip_occurrence = True
+
+                elif evaluation.result_level == "pass": # and occurrence.status != models.FindingStatus.REMEDIATED
+                    occurrence.status = models.FindingStatus.REMEDIATED
+                    occurrence.remediated_at = datetime.now(tz=timezone.utc)
+                    now_remediated = True
+
+                elif occurrence.status == models.FindingStatus.REMEDIATED: # and evaluation.result_level != "pass"
+                    occurrence.status = models.FindingStatus.REGRESSION
+                    occurrence.regressed_at = datetime.now(tz=timezone.utc)
+                    now_regressed = True
+                    if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
+                        digest.append({
+                            'name': evaluation.name,
+                            'key': evaluation.key,
+                            'group': evaluation.group,
+                            'group_id': evaluation.group_id,
+                            'rule_id': evaluation.rule_id,
+                            'result_value': evaluation.result_value,
+                            'result_label': evaluation.result_label,
+                            'result_level': evaluation.result_level,
+                            'is_critical': (
+                                evaluation.result_label.lower() in ["compromised", "vulnerable", "revoked", "expired"]
+                                or evaluation.result_label.lower().startswith("compromised")
+                            ),
+                            **occurrence.dict()
+                        })
                 break
 
-        if new_occurrence:
+        if skip_occurrence:
+            internals.logger.debug(f"SKIP {evaluation.name}")
+            continue
+
+        if not matched:
             occurrence = models.FindingOccurrence(
                 hostname=evaluation.transport.hostname,
                 port=evaluation.transport.port,
@@ -117,40 +151,55 @@ def _process_issues(account_name: str, report_id: str):
                 occurrence.certificate_sha1 = evaluation.certificate.sha1_fingerprint
             occurrence.report_ids = [report.report_id]
             finding.occurrences.append(occurrence)
+            if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
+                digest.append({
+                    'name': evaluation.name,
+                    'key': evaluation.key,
+                    'group': evaluation.group,
+                    'group_id': evaluation.group_id,
+                    'rule_id': evaluation.rule_id,
+                    'result_value': evaluation.result_value,
+                    'result_label': evaluation.result_label,
+                    'result_level': evaluation.result_level,
+                    'is_critical': (
+                        evaluation.result_label.lower() in ["compromised", "vulnerable", "revoked", "expired"]
+                        or evaluation.result_label.lower().startswith("compromised")
+                    ),
+                    **occurrence.dict()
+                })
 
         if not finding.save():
             internals.logger.warning(f"Failed to save finding_id {finding_id}")
             continue
-        if not new_finding:
-            continue
+        if new_finding or now_remediated or now_regressed:
+            services.webhook.send(
+                event_name=webhook_event,
+                account=account,
+                data=finding.dict(),
+            )
 
-        services.webhook.send(
-            event_name=webhook_event,
-            account=account,
-            data=finding.dict(),
+    if digest:
+        internals.logger.info("Emailing findings digest")
+        sendgrid = services.sendgrid.send_email(
+            subject="New Findings",
+            recipient=account.primary_email,
+            template="findings_digest",
+            data={
+                'findings': digest,
+                'results_uri': report.results_uri,
+                'score': report.score,
+                'pass_result': report.results.get('pass', 0),
+                'info_result': report.results.get('info', 0),
+                'warn_result': report.results.get('warn', 0),
+                'fail_result': report.results.get('fail', 0),
+            },
         )
-        if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
-            internals.logger.info("Emailing alert")
-            # sendgrid = services.sendgrid.send_email(
-            #     subject=f"New Finding - {subject_suffix}",
-            #     recipient=account.primary_email,
-            #     template="scan_completed",
-            #     data={
-            #         'hostname': evaluation.transport.hostname,
-            #         'results_uri': report.results_uri,
-            #         'score': report.score,
-            #         'pass_result': report.results.get('pass', 0),
-            #         'info_result': report.results.get('info', 0),
-            #         'warn_result': report.results.get('warn', 0),
-            #         'fail_result': report.results.get('fail', 0),
-            #     },
-            # )
-            # if sendgrid._content:  # pylint: disable=protected-access
-            #     res = json.loads(
-            #         sendgrid._content.decode()  # pylint: disable=protected-access
-            #     )
-            #     if isinstance(res, dict) and res.get("errors"):
-            #         internals.logger.error(res.get("errors"))
+        if sendgrid._content:  # pylint: disable=protected-access
+            res = json.loads(
+                sendgrid._content.decode()  # pylint: disable=protected-access
+            )
+            if isinstance(res, dict) and res.get("errors"):
+                internals.logger.error(res.get("errors"))
 
 
 def _certificate_issues(account_name: str, reports: list[models.FullReport]):

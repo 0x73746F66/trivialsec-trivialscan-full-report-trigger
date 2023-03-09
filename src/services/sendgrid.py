@@ -19,7 +19,8 @@ SENDGRID_TEMPLATES = {
     "subscriptions": "d-1d20f029d4eb46b5957c253c3ccd3262",
     "support": "d-821ef38856bb4d0581f26c4745ce00e7",
     "updated_email": "d-fef742bc0a754165a8778f4929df3dbb",
-    "webhook_signing_secret": "d-98a39d14bb11487c94f27d9df88c5c82"
+    "webhook_signing_secret": "d-98a39d14bb11487c94f27d9df88c5c82",
+    "findings_digest": "d-16239339314e475eac2ba9711666de8b"
 }
 SENDGRID_GROUPS = {
     'notifications': 18318,

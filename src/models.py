@@ -965,6 +965,7 @@ class FindingStatus(str, Enum):
     WONT_FIX = 'wont_fix' # closed
     DEFERRED = 'deferred'
     REMEDIATED = 'remediated'
+    REGRESSION = 'regression'
 
 
 class FindingOccurrence(BaseModel):
@@ -978,6 +979,7 @@ class FindingOccurrence(BaseModel):
     deferred_to: Optional[datetime] = Field(default=None)
     closed_at: Optional[datetime] = Field(default=None)
     remediated_at: Optional[datetime] = Field(default=None)
+    regressed_at: Optional[datetime] = Field(default=None)
     false_positive_reason: Optional[str] = Field(default='')
 
 class Finding(BaseModel, DAL):
@@ -993,8 +995,6 @@ class Finding(BaseModel, DAL):
     cvss2: Union[str, Any] = Field(default=None)
     cvss3: Union[str, Any] = Field(default=None)
     customer_cvss3: Optional[str] = Field(default=None)
-    is_vulnerable: bool = Field(default=False)
-    is_warning: bool = Field(default=False)
 
     def exists(
         self,
