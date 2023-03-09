@@ -69,7 +69,15 @@ def _process_issues(account_name: str, report_id: str):
         internals.logger.warning(f"Failed to load account_name {account_name} report_id {report_id}")
         return
     for evaluation in report.evaluations:
-        finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}")
+        if evaluation.certificate:
+            finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}{evaluation.certificate.sha1_fingerprint}")
+            webhook_event = models.WebhookEvent.NEW_FINDINGS_CERTIFICATES
+            subject_suffix = f"Certificate: {evaluation.certificate.subject}"
+        elif evaluation.transport.hostname:
+            finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}{evaluation.transport.hostname}{evaluation.transport.port}")
+            webhook_event = models.WebhookEvent.NEW_FINDINGS_DOMAINS
+            subject_suffix = evaluation.transport.hostname
+
         finding = models.Finding(
             finding_id=finding_id,
             **evaluation.dict()
@@ -82,18 +90,12 @@ def _process_issues(account_name: str, report_id: str):
         reports = set(finding.report_ids)
         reports.add(report.report_id)
         finding.report_ids = list(reports)
-        if evaluation.certificate:
-            webhook_event = models.WebhookEvent.NEW_FINDINGS_CERTIFICATES
-            subject_suffix = f"Certificate: {evaluation.certificate.subject}"
-            certificates = set(finding.certificates)
-            certificates.add(evaluation.certificate.sha1_fingerprint)
-            finding.certificates = list(certificates)
-        elif evaluation.transport.hostname:
-            webhook_event = models.WebhookEvent.NEW_FINDINGS_DOMAINS
-            subject_suffix = evaluation.transport.hostname
-            hosts = set(finding.hosts)
-            hosts.add(f"{evaluation.transport.hostname}:{evaluation.transport.port}")
-            finding.hosts = list(hosts)
+        certificates = set(finding.certificates)
+        hosts = set(finding.hosts)
+        certificates.add(evaluation.certificate.sha1_fingerprint)
+        finding.certificates = list(certificates)
+        hosts.add(f"{evaluation.transport.hostname}:{evaluation.transport.port}")
+        finding.hosts = list(hosts)
         if not finding.save():
             internals.logger.warning(f"Failed to save finding_id {finding_id}")
         if not new_finding:
@@ -109,8 +111,16 @@ def _process_issues(account_name: str, report_id: str):
             sendgrid = services.sendgrid.send_email(
                 subject=f"New Finding - {subject_suffix}",
                 recipient=account.primary_email,
-                template="new_finding",
-                data=finding.dict(),
+                template="scan_completed",
+                data={
+                    'hostname': evaluation.transport.hostname,
+                    'results_uri': report.results_uri,
+                    'score': report.score,
+                    'pass_result': report.results.get('pass', 0),
+                    'info_result': report.results.get('info', 0),
+                    'warn_result': report.results.get('warn', 0),
+                    'fail_result': report.results.get('fail', 0),
+                },
             )
             if sendgrid._content:  # pylint: disable=protected-access
                 res = json.loads(
