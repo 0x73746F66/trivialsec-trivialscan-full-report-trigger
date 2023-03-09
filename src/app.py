@@ -51,9 +51,9 @@ def handler(event, context):
         reports.append(report)
         summaries.append(models.ReportSummary(**report.dict()))
 
-    _graphing_data(account_name, reports)
-    _findings_data(account_name, reports)
-    _certificate_issues(account_name, reports)
+    # _graphing_data(account_name, reports)
+    # _findings_data(account_name, reports)
+    # _certificate_issues(account_name, reports)
 
 
 def _process_issues(account_name: str, report_id: str):
@@ -77,6 +77,9 @@ def _process_issues(account_name: str, report_id: str):
             finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}{evaluation.transport.hostname}{evaluation.transport.port}")
             webhook_event = models.WebhookEvent.NEW_FINDINGS_DOMAINS
             subject_suffix = evaluation.transport.hostname
+        else:
+            internals.logger.error(f"Invalid EvaluationItem {evaluation}")
+            continue
 
         finding = models.Finding(
             finding_id=finding_id,
@@ -84,20 +87,40 @@ def _process_issues(account_name: str, report_id: str):
         )
         new_finding = False
         if not finding.load():
+            finding.is_warning = evaluation.result_level == 'warn'
+            finding.is_vulnerable = evaluation.result_level == 'fail' and (
+                evaluation.result_label.lower() in ["compromised", "vulnerable", "revoked", "expired"]
+                or evaluation.result_label.lower().startswith("compromised")
+            )
             new_finding = True
 
-        finding.last_seen = datetime.now(tz=timezone.utc)
-        reports = set(finding.report_ids)
-        reports.add(report.report_id)
-        finding.report_ids = list(reports)
-        certificates = set(finding.certificates)
-        hosts = set(finding.hosts)
-        certificates.add(evaluation.certificate.sha1_fingerprint)
-        finding.certificates = list(certificates)
-        hosts.add(f"{evaluation.transport.hostname}:{evaluation.transport.port}")
-        finding.hosts = list(hosts)
+        new_occurrence = True
+        for occurrence in finding.occurrences:
+            if evaluation.certificate and occurrence.certificate_sha1 == evaluation.certificate.sha1_fingerprint:
+                occurrence.last_seen = datetime.now(tz=timezone.utc)
+                occurrence.report_ids.append(report.report_id)
+                new_occurrence = False
+                break
+            if occurrence.hostname == evaluation.transport.hostname and occurrence.port == evaluation.transport.port:
+                occurrence.last_seen = datetime.now(tz=timezone.utc)
+                occurrence.report_ids.append(report.report_id)
+                new_occurrence = False
+                break
+
+        if new_occurrence:
+            occurrence = models.FindingOccurrence(
+                hostname=evaluation.transport.hostname,
+                port=evaluation.transport.port,
+                last_seen = datetime.now(tz=timezone.utc),
+            )
+            if evaluation.certificate:
+                occurrence.certificate_sha1 = evaluation.certificate.sha1_fingerprint
+            occurrence.report_ids = [report.report_id]
+            finding.occurrences.append(occurrence)
+
         if not finding.save():
             internals.logger.warning(f"Failed to save finding_id {finding_id}")
+            continue
         if not new_finding:
             continue
 
@@ -108,26 +131,26 @@ def _process_issues(account_name: str, report_id: str):
         )
         if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
             internals.logger.info("Emailing alert")
-            sendgrid = services.sendgrid.send_email(
-                subject=f"New Finding - {subject_suffix}",
-                recipient=account.primary_email,
-                template="scan_completed",
-                data={
-                    'hostname': evaluation.transport.hostname,
-                    'results_uri': report.results_uri,
-                    'score': report.score,
-                    'pass_result': report.results.get('pass', 0),
-                    'info_result': report.results.get('info', 0),
-                    'warn_result': report.results.get('warn', 0),
-                    'fail_result': report.results.get('fail', 0),
-                },
-            )
-            if sendgrid._content:  # pylint: disable=protected-access
-                res = json.loads(
-                    sendgrid._content.decode()  # pylint: disable=protected-access
-                )
-                if isinstance(res, dict) and res.get("errors"):
-                    internals.logger.error(res.get("errors"))
+            # sendgrid = services.sendgrid.send_email(
+            #     subject=f"New Finding - {subject_suffix}",
+            #     recipient=account.primary_email,
+            #     template="scan_completed",
+            #     data={
+            #         'hostname': evaluation.transport.hostname,
+            #         'results_uri': report.results_uri,
+            #         'score': report.score,
+            #         'pass_result': report.results.get('pass', 0),
+            #         'info_result': report.results.get('info', 0),
+            #         'warn_result': report.results.get('warn', 0),
+            #         'fail_result': report.results.get('fail', 0),
+            #     },
+            # )
+            # if sendgrid._content:  # pylint: disable=protected-access
+            #     res = json.loads(
+            #         sendgrid._content.decode()  # pylint: disable=protected-access
+            #     )
+            #     if isinstance(res, dict) and res.get("errors"):
+            #         internals.logger.error(res.get("errors"))
 
 
 def _certificate_issues(account_name: str, reports: list[models.FullReport]):
