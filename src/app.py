@@ -165,7 +165,12 @@ def _process_issues(account_name: str, report_id: str):
                         evaluation.result_label.lower() in ["compromised", "vulnerable", "revoked", "expired"]
                         or evaluation.result_label.lower().startswith("compromised")
                     ),
-                    **occurrence.dict()
+                    'report_ids': occurrence.report_ids,
+                    'hostname': occurrence.hostname,
+                    'port': occurrence.port,
+                    'last_seen': occurrence.last_seen,
+                    'certificate_sha1': occurrence.certificate_sha1,
+                    'status': occurrence.status,
                 })
 
         if not finding.save():
