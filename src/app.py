@@ -168,9 +168,9 @@ def _process_issues(account_name: str, report_id: str):
                     'report_ids': occurrence.report_ids,
                     'hostname': occurrence.hostname,
                     'port': occurrence.port,
-                    'last_seen': occurrence.last_seen,
+                    'last_seen': occurrence.last_seen.isoformat(),
                     'certificate_sha1': occurrence.certificate_sha1,
-                    'status': occurrence.status,
+                    'status': occurrence.status.value,
                 })
 
         if not finding.save():
