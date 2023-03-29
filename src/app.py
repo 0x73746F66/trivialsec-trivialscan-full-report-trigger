@@ -72,7 +72,11 @@ def handler(event, context):
                 occurrence.last_seen = datetime.now(tz=timezone.utc)
                 occurrence.report_ids.append(report.report_id)
                 occurrence.occurrence_id = occurrence_id
-                occurrence.report_ids = [_report_id for _report_id in occurrence.report_ids if services.aws.object_exists(f"{internals.APP_ENV}/accounts/{account_name}/results/{_report_id}/full-report.json")]
+                occurrence.report_ids = list({
+                    _report_id
+                    for _report_id in occurrence.report_ids
+                    if services.aws.object_exists(f"{internals.APP_ENV}/accounts/{account_name}/results/{_report_id}/full-report.json")
+                })
                 if evaluation.result_level == "pass" and occurrence.status == models.FindingStatus.REMEDIATED:
                     skip_occurrence = True
                     continue
