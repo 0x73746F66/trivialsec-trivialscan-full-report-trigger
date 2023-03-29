@@ -24,6 +24,11 @@ def handler(event, context):
         return
 
     _, _, account_name, *_ = trigger_object.split("/")
+    account = models.MemberAccount(name=account_name)
+    if not account.load():
+        internals.logger.warning(f"Failed to load account {account_name}")
+        return
+
     prefix_key = f"{internals.APP_ENV}/accounts/{account_name}/results/"
     report_id = trigger_object.replace(prefix_key, "").replace("/full-report.json", "")
     report = models.FullReport(
@@ -33,19 +38,16 @@ def handler(event, context):
     if not report.load():
         internals.logger.warning(f"Failed to load account_name {account_name} report {report_id}")
         return
-    account = models.MemberAccount(name=account_name)
-    if not account.load():
-        internals.logger.warning(f"Failed to load account {account_name} report_id {report_id}")
-        return
 
     digest = []
     for evaluation in report.evaluations:
+        finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}")
         if evaluation.certificate:
-            finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}{evaluation.certificate.sha1_fingerprint}")
+            occurrence_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}{evaluation.certificate.sha1_fingerprint}")
             webhook_event = models.WebhookEvent.NEW_FINDINGS_CERTIFICATES
 
         elif evaluation.transport.hostname:
-            finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}{evaluation.transport.hostname}{evaluation.transport.port}")
+            occurrence_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}{evaluation.transport.hostname}{evaluation.transport.port}")
             webhook_event = models.WebhookEvent.NEW_FINDINGS_DOMAINS
 
         else:
@@ -65,20 +67,15 @@ def handler(event, context):
         now_remediated = False
         now_regressed = False
         for occurrence in finding.occurrences:
-            if evaluation.certificate and occurrence.certificate_sha1 == evaluation.certificate.sha1_fingerprint:
+            if occurrence_id and occurrence.occurrence_id or evaluation.certificate and occurrence.certificate_sha1 == evaluation.certificate.sha1_fingerprint or (occurrence.hostname == evaluation.transport.hostname and occurrence.port == evaluation.transport.port):
+                matched = True
                 occurrence.last_seen = datetime.now(tz=timezone.utc)
                 occurrence.report_ids.append(report.report_id)
-                matched = True
-
-            if occurrence.hostname == evaluation.transport.hostname and occurrence.port == evaluation.transport.port:
-                occurrence.last_seen = datetime.now(tz=timezone.utc)
-                occurrence.report_ids.append(report.report_id)
-                matched = True
-
-            if matched:
+                occurrence.occurrence_id = occurrence_id
+                occurrence.report_ids = [_report_id for _report_id in occurrence.report_ids if services.aws.object_exists(f"{internals.APP_ENV}/accounts/{account_name}/results/{_report_id}/full-report.json")]
                 if evaluation.result_level == "pass" and occurrence.status == models.FindingStatus.REMEDIATED:
                     skip_occurrence = True
-
+                    continue
                 elif evaluation.result_level == "pass": # and occurrence.status != models.FindingStatus.REMEDIATED
                     occurrence.status = models.FindingStatus.REMEDIATED
                     occurrence.remediated_at = datetime.now(tz=timezone.utc)
@@ -88,22 +85,29 @@ def handler(event, context):
                     occurrence.status = models.FindingStatus.REGRESSION
                     occurrence.regressed_at = datetime.now(tz=timezone.utc)
                     now_regressed = True
-                    if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
-                        digest.append({
-                            'name': evaluation.name,
-                            'key': evaluation.key,
-                            'group': evaluation.group,
-                            'group_id': evaluation.group_id,
-                            'rule_id': evaluation.rule_id,
-                            'result_value': evaluation.result_value,
-                            'result_label': evaluation.result_label,
-                            'result_level': evaluation.result_level,
-                            'is_critical': (
-                                evaluation.result_label.lower() in ["compromised", "vulnerable", "revoked", "expired"]
-                                or evaluation.result_label.lower().startswith("compromised")
-                            ),
-                            **occurrence.dict()
-                        })
+
+                if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
+                    digest.append({
+                        'name': evaluation.name,
+                        'key': evaluation.key,
+                        'group': evaluation.group,
+                        'group_id': evaluation.group_id,
+                        'rule_id': evaluation.rule_id,
+                        'result_value': evaluation.result_value,
+                        'result_label': evaluation.result_label,
+                        'result_level': evaluation.result_level,
+                        'is_critical': (
+                            evaluation.result_label.lower() in ["compromised", "vulnerable", "revoked", "expired"]
+                            or evaluation.result_label.lower().startswith("compromised")
+                        ),
+                        'occurrence_id': str(occurrence.occurrence_id),
+                        'report_ids': occurrence.report_ids,
+                        'hostname': occurrence.hostname,
+                        'port': occurrence.port,
+                        'last_seen': occurrence.last_seen.isoformat(),
+                        'certificate_sha1': occurrence.certificate_sha1,
+                        'status': occurrence.status.value,
+                    })
                 break
 
         if skip_occurrence:
@@ -112,6 +116,7 @@ def handler(event, context):
 
         if not matched:
             occurrence = models.FindingOccurrence(
+                occurrence_id=occurrence_id,
                 hostname=evaluation.transport.hostname,
                 port=evaluation.transport.port,
                 last_seen = datetime.now(tz=timezone.utc),
@@ -134,6 +139,7 @@ def handler(event, context):
                         evaluation.result_label.lower() in ["compromised", "vulnerable", "revoked", "expired"]
                         or evaluation.result_label.lower().startswith("compromised")
                     ),
+                    'occurrence_id': str(occurrence.occurrence_id),
                     'report_ids': occurrence.report_ids,
                     'hostname': occurrence.hostname,
                     'port': occurrence.port,
