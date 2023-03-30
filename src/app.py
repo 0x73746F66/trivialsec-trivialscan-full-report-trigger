@@ -61,35 +61,37 @@ def handler(event, context):
         new_finding = False
         if not finding.load():
             new_finding = True
-
+            internals.logger.info(f"New {finding_id} {finding.account_name} {evaluation.transport.hostname}:{evaluation.transport.port} {finding.name}")
         skip_occurrence = new_finding and evaluation.result_level == "pass"
         matched = False
         now_remediated = False
         now_regressed = False
         occurrences = []
         for occurrence in finding.occurrences.copy():
-            if occurrence_id == occurrence.occurrence_id:
-                matched = True
-                occurrence.last_seen = datetime.now(tz=timezone.utc)
-                occurrence.report_ids.append(report.report_id)
-                occurrence.report_ids = list({
-                    _report_id
-                    for _report_id in occurrence.report_ids.copy()
-                    if services.aws.object_exists(f"{internals.APP_ENV}/accounts/{account_name}/results/{_report_id}/full-report.json")
-                })
-                if evaluation.result_level == "pass" and occurrence.status == models.FindingStatus.REMEDIATED:
-                    skip_occurrence = True
-                    continue
-                elif evaluation.result_level == "pass": # and occurrence.status != models.FindingStatus.REMEDIATED
-                    occurrence.status = models.FindingStatus.REMEDIATED
-                    occurrence.remediated_at = datetime.now(tz=timezone.utc)
-                    now_remediated = True
-
-                elif occurrence.status == models.FindingStatus.REMEDIATED: # and evaluation.result_level != "pass"
-                    occurrence.status = models.FindingStatus.REGRESSION
-                    occurrence.regressed_at = datetime.now(tz=timezone.utc)
-                    now_regressed = True
+            if occurrence_id != occurrence.occurrence_id:
                 occurrences.append(occurrence)
+                continue
+
+            matched = True
+            occurrence.last_seen = datetime.now(tz=timezone.utc)
+            occurrence.report_ids.append(report.report_id)
+            occurrence.report_ids = list({
+                _report_id
+                for _report_id in occurrence.report_ids.copy()
+                if services.aws.object_exists(f"{internals.APP_ENV}/accounts/{account_name}/results/{_report_id}/full-report.json")
+            })
+            if evaluation.result_level == "pass" and occurrence.status == models.FindingStatus.REMEDIATED:
+                skip_occurrence = True
+
+            elif evaluation.result_level == "pass": # and occurrence.status != models.FindingStatus.REMEDIATED
+                occurrence.status = models.FindingStatus.REMEDIATED
+                occurrence.remediated_at = datetime.now(tz=timezone.utc)
+                now_remediated = True
+
+            elif occurrence.status == models.FindingStatus.REMEDIATED: # and evaluation.result_level != "pass"
+                occurrence.status = models.FindingStatus.REGRESSION
+                occurrence.regressed_at = datetime.now(tz=timezone.utc)
+                now_regressed = True
                 if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
                     digest.append({
                         'name': evaluation.name,
@@ -110,15 +112,18 @@ def handler(event, context):
                         'port': occurrence.port,
                         'last_seen': occurrence.last_seen.isoformat(),
                         'certificate_sha1': occurrence.certificate_sha1,
+                        'certificate_subject': occurrence.certificate_subject,
                         'status': occurrence.status.value,
                     })
-                break
+            occurrences.append(occurrence)
 
         if skip_occurrence:
             internals.logger.debug(f"SKIP {evaluation.name}")
             continue
 
-        if not matched:
+        if matched:
+            finding.occurrences = occurrences
+        else:
             occurrence = models.FindingOccurrence(
                 occurrence_id=occurrence_id,
                 hostname=evaluation.transport.hostname,
@@ -127,9 +132,10 @@ def handler(event, context):
             )
             if evaluation.certificate:
                 occurrence.certificate_sha1 = evaluation.certificate.sha1_fingerprint
+                occurrence.certificate_subject = evaluation.certificate.subject
             occurrence.report_ids = [report.report_id]
-            occurrences.append(occurrence)
-            if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
+            finding.occurrences.append(occurrence)
+            if new_finding and (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
                 digest.append({
                     'name': evaluation.name,
                     'key': evaluation.key,
@@ -149,10 +155,10 @@ def handler(event, context):
                     'port': occurrence.port,
                     'last_seen': occurrence.last_seen.isoformat(),
                     'certificate_sha1': occurrence.certificate_sha1,
+                    'certificate_subject': occurrence.certificate_subject,
                     'status': occurrence.status.value,
                 })
 
-        finding.occurrences = occurrences
         if not finding.save():
             internals.logger.warning(f"Failed to save finding_id {finding_id}")
             continue

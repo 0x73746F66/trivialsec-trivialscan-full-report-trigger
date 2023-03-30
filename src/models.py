@@ -976,6 +976,7 @@ class FindingOccurrence(BaseModel):
     port: int
     last_seen: Optional[datetime]
     certificate_sha1: Optional[str]
+    certificate_subject: Optional[str]
     status: Optional[FindingStatus] = Field(default=FindingStatus.DISCOVERED)
     triaged_at: Optional[datetime] = Field(default=None)
     deferred_to: Optional[datetime] = Field(default=None)
@@ -983,6 +984,7 @@ class FindingOccurrence(BaseModel):
     remediated_at: Optional[datetime] = Field(default=None)
     regressed_at: Optional[datetime] = Field(default=None)
     false_positive_reason: Optional[str] = Field(default='')
+
 
 class Finding(BaseModel, DAL):
     finding_id: UUID
