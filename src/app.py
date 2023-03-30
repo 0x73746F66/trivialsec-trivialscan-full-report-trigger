@@ -42,7 +42,7 @@ def handler(event, context):
     digest = []
     for evaluation in report.evaluations:
         finding_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}")
-        if evaluation.certificate:
+        if evaluation.group == 'certificate' and evaluation.certificate.sha1_fingerprint:
             occurrence_id = uuid5(internals.NAMESPACE, f"{account_name}{evaluation.group}{evaluation.key}{evaluation.certificate.sha1_fingerprint}")
             webhook_event = models.WebhookEvent.NEW_FINDINGS_CERTIFICATES
 
@@ -66,15 +66,15 @@ def handler(event, context):
         matched = False
         now_remediated = False
         now_regressed = False
-        for occurrence in finding.occurrences:
-            if occurrence_id and occurrence.occurrence_id or evaluation.certificate and occurrence.certificate_sha1 == evaluation.certificate.sha1_fingerprint or (occurrence.hostname == evaluation.transport.hostname and occurrence.port == evaluation.transport.port):
+        occurrences = []
+        for occurrence in finding.occurrences.copy():
+            if occurrence_id == occurrence.occurrence_id:
                 matched = True
                 occurrence.last_seen = datetime.now(tz=timezone.utc)
                 occurrence.report_ids.append(report.report_id)
-                occurrence.occurrence_id = occurrence_id
                 occurrence.report_ids = list({
                     _report_id
-                    for _report_id in occurrence.report_ids
+                    for _report_id in occurrence.report_ids.copy()
                     if services.aws.object_exists(f"{internals.APP_ENV}/accounts/{account_name}/results/{_report_id}/full-report.json")
                 })
                 if evaluation.result_level == "pass" and occurrence.status == models.FindingStatus.REMEDIATED:
@@ -89,7 +89,7 @@ def handler(event, context):
                     occurrence.status = models.FindingStatus.REGRESSION
                     occurrence.regressed_at = datetime.now(tz=timezone.utc)
                     now_regressed = True
-
+                occurrences.append(occurrence)
                 if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
                     digest.append({
                         'name': evaluation.name,
@@ -128,7 +128,7 @@ def handler(event, context):
             if evaluation.certificate:
                 occurrence.certificate_sha1 = evaluation.certificate.sha1_fingerprint
             occurrence.report_ids = [report.report_id]
-            finding.occurrences.append(occurrence)
+            occurrences.append(occurrence)
             if (account.notifications.new_findings_domains and webhook_event == models.WebhookEvent.NEW_FINDINGS_DOMAINS) or (account.notifications.new_findings_certificates and webhook_event == models.WebhookEvent.NEW_FINDINGS_CERTIFICATES):
                 digest.append({
                     'name': evaluation.name,
@@ -152,9 +152,11 @@ def handler(event, context):
                     'status': occurrence.status.value,
                 })
 
+        finding.occurrences = occurrences
         if not finding.save():
             internals.logger.warning(f"Failed to save finding_id {finding_id}")
             continue
+
         if new_finding or now_remediated or now_regressed:
             services.webhook.send(
                 event_name=webhook_event,
