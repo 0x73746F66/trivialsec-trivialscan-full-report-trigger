@@ -1,7 +1,7 @@
 data "aws_iam_policy_document" "full_report_trigger_assume_role_policy" {
   statement {
-    sid = "${var.app_env}FullReportTriggerAssumeRole"
-    actions    = ["sts:AssumeRole"]
+    sid     = "${var.app_env}FullReportTriggerAssumeRole"
+    actions = ["sts:AssumeRole"]
     principals {
       type        = "Service"
       identifiers = ["lambda.amazonaws.com"]
@@ -11,7 +11,7 @@ data "aws_iam_policy_document" "full_report_trigger_assume_role_policy" {
 data "aws_iam_policy_document" "full_report_trigger_iam_policy" {
   statement {
     sid = "${var.app_env}FullReportTriggerLogging"
-    actions   = [
+    actions = [
       "logs:CreateLogGroup",
       "logs:CreateLogStream",
       "logs:PutLogEvents"
@@ -22,7 +22,7 @@ data "aws_iam_policy_document" "full_report_trigger_iam_policy" {
   }
   statement {
     sid = "${var.app_env}FullReportTriggerObjList"
-    actions   = [
+    actions = [
       "s3:Head*",
       "s3:List*",
     ]
@@ -33,7 +33,7 @@ data "aws_iam_policy_document" "full_report_trigger_iam_policy" {
   }
   statement {
     sid = "${var.app_env}FullReportTriggerObjAccess"
-    actions   = [
+    actions = [
       "s3:DeleteObject",
       "s3:GetObject",
       "s3:PutObject",
@@ -44,7 +44,7 @@ data "aws_iam_policy_document" "full_report_trigger_iam_policy" {
   }
   statement {
     sid = "${var.app_env}FullReportTriggerSecrets"
-    actions   = [
+    actions = [
       "ssm:GetParameter",
     ]
     resources = [
@@ -53,7 +53,7 @@ data "aws_iam_policy_document" "full_report_trigger_iam_policy" {
   }
   statement {
     sid = "${var.app_env}FullReportTriggerDynamoDB"
-    actions   = [
+    actions = [
       "dynamodb:PutItem",
       "dynamodb:GetItem",
       "dynamodb:DeleteItem"
@@ -64,7 +64,7 @@ data "aws_iam_policy_document" "full_report_trigger_iam_policy" {
   }
   statement {
     sid = "${var.app_env}FullReportTriggerDynamoDBQuery"
-    actions   = [
+    actions = [
       "dynamodb:Query"
     ]
     resources = [
@@ -80,9 +80,9 @@ resource "aws_iam_role" "full_report_trigger_role" {
   }
 }
 resource "aws_iam_policy" "full_report_trigger_policy" {
-  name        = "${lower(var.app_env)}_full_report_trigger_lambda_policy"
-  path        = "/"
-  policy      = data.aws_iam_policy_document.full_report_trigger_iam_policy.json
+  name   = "${lower(var.app_env)}_full_report_trigger_lambda_policy"
+  path   = "/"
+  policy = data.aws_iam_policy_document.full_report_trigger_iam_policy.json
 }
 resource "aws_iam_role_policy_attachment" "policy_attach" {
   role       = aws_iam_role.full_report_trigger_role.name
