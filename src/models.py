@@ -3,7 +3,7 @@ import json
 from abc import ABCMeta, abstractmethod
 from enum import Enum
 from typing import Union, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from uuid import UUID
 from ipaddress import IPv4Address, IPv6Address, IPv4Network, IPv6Network
 
@@ -979,26 +979,50 @@ class FindingOccurrence(BaseModel):
     certificate_subject: Optional[str]
     status: Optional[FindingStatus] = Field(default=FindingStatus.DISCOVERED)
     triaged_at: Optional[datetime] = Field(default=None)
-    deferred_to: Optional[datetime] = Field(default=None)
+    deferred_to: Optional[date] = Field(default=None)
     closed_at: Optional[datetime] = Field(default=None)
     remediated_at: Optional[datetime] = Field(default=None)
     regressed_at: Optional[datetime] = Field(default=None)
-    false_positive_reason: Optional[str] = Field(default='')
+    false_positive_reason: Optional[str] = Field(default="")
+
+    class Config:
+        validate_assignment = True
+
+    @validator("last_seen")
+    def set_last_seen(cls, last_seen: datetime):
+        return last_seen.replace(tzinfo=timezone.utc) if last_seen else None
+
+    @validator("triaged_at")
+    def set_triaged_at(cls, triaged_at: datetime):
+        return triaged_at.replace(tzinfo=timezone.utc) if triaged_at else None
+
+    @validator("closed_at")
+    def set_closed_at(cls, closed_at: datetime):
+        return closed_at.replace(tzinfo=timezone.utc) if closed_at else None
+
+    @validator("remediated_at")
+    def set_remediated_at(cls, remediated_at: datetime):
+        return remediated_at.replace(tzinfo=timezone.utc) if remediated_at else None
+
+    @validator("regressed_at")
+    def set_regressed_at(cls, regressed_at: datetime):
+        return regressed_at.replace(tzinfo=timezone.utc) if regressed_at else None
 
 
 class Finding(BaseModel, DAL):
     finding_id: UUID
-    account_name: str
+    account_name: Optional[str]
     observed_at: Optional[datetime]
-    occurrences: list[FindingOccurrence] = Field(default=[])
-    rule_id: int
-    group_id: int
-    key: str
-    group: str
-    name: str
-    cvss2: Union[str, Any] = Field(default=None)
-    cvss3: Union[str, Any] = Field(default=None)
-    customer_cvss3: Optional[str] = Field(default=None)
+    occurrences: Optional[list[FindingOccurrence]] = Field(default=[])
+    rule_id: Optional[int]
+    group_id: Optional[int]
+    key: Optional[str]
+    group: Optional[str]
+    name: Optional[str]
+    description: Optional[str]
+    cvss2: Optional[str]
+    cvss3: Optional[str]
+    customer_cvss3: Optional[str]
 
     def exists(
         self,
@@ -1011,16 +1035,26 @@ class Finding(BaseModel, DAL):
         finding_id: Union[str, None] = None,
     ) -> bool:
         if finding_id:
-            self.finding_id = finding_id
-        response = services.aws.get_dynamodb(table_name=services.aws.Tables.FINDINGS, item_key={'finding_id': str(self.finding_id)})
+            self.finding_id = UUID(finding_id)
+        response = services.aws.get_dynamodb(
+            table_name=services.aws.Tables.FINDINGS,
+            item_key={"finding_id": str(self.finding_id)},
+        )
         if not response:
-            internals.logger.warning(f"Missing finding data for finding_id: {self.finding_id}")
+            internals.logger.warning(
+                f"Missing finding data for finding_id: {self.finding_id}"
+            )
             return False
         super().__init__(**response)
         return True
 
     def save(self) -> bool:
-        return services.aws.put_dynamodb(table_name=services.aws.Tables.FINDINGS, item=self.dict())
+        return services.aws.put_dynamodb(
+            table_name=services.aws.Tables.FINDINGS, item=self.dict()
+        )
 
     def delete(self) -> bool:
-        return services.aws.delete_dynamodb(table_name=services.aws.Tables.FINDINGS, item_key={'finding_id': str(self.finding_id)})
+        return services.aws.delete_dynamodb(
+            table_name=services.aws.Tables.FINDINGS,
+            item_key={"finding_id": str(self.finding_id)},
+        )
