@@ -3,7 +3,7 @@ import json
 from abc import ABCMeta, abstractmethod
 from enum import Enum
 from typing import Union, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from uuid import UUID
 from ipaddress import IPv4Address, IPv6Address, IPv4Network, IPv6Network
 
@@ -979,11 +979,34 @@ class FindingOccurrence(BaseModel):
     certificate_subject: Optional[str]
     status: Optional[FindingStatus] = Field(default=FindingStatus.DISCOVERED)
     triaged_at: Optional[datetime] = Field(default=None)
-    deferred_to: Optional[datetime] = Field(default=None)
+    deferred_to: Optional[date] = Field(default=None)
     closed_at: Optional[datetime] = Field(default=None)
     remediated_at: Optional[datetime] = Field(default=None)
     regressed_at: Optional[datetime] = Field(default=None)
-    false_positive_reason: Optional[str] = Field(default='')
+    false_positive_reason: Optional[str] = Field(default="")
+
+    class Config:
+        validate_assignment = True
+
+    @validator("last_seen")
+    def set_last_seen(cls, last_seen: datetime):
+        return last_seen.replace(tzinfo=timezone.utc) if last_seen else None
+
+    @validator("triaged_at")
+    def set_triaged_at(cls, triaged_at: datetime):
+        return triaged_at.replace(tzinfo=timezone.utc) if triaged_at else None
+
+    @validator("closed_at")
+    def set_closed_at(cls, closed_at: datetime):
+        return closed_at.replace(tzinfo=timezone.utc) if closed_at else None
+
+    @validator("remediated_at")
+    def set_remediated_at(cls, remediated_at: datetime):
+        return remediated_at.replace(tzinfo=timezone.utc) if remediated_at else None
+
+    @validator("regressed_at")
+    def set_regressed_at(cls, regressed_at: datetime):
+        return regressed_at.replace(tzinfo=timezone.utc) if regressed_at else None
 
 
 class Finding(BaseModel, DAL):
@@ -999,6 +1022,13 @@ class Finding(BaseModel, DAL):
     cvss2: Union[str, Any] = Field(default=None)
     cvss3: Union[str, Any] = Field(default=None)
     customer_cvss3: Optional[str] = Field(default=None)
+
+    class Config:
+        validate_assignment = True
+
+    @validator("observed_at")
+    def set_observed_at(cls, observed_at: datetime):
+        return observed_at.replace(tzinfo=timezone.utc) if observed_at else None
 
     def exists(
         self,
