@@ -1,5 +1,5 @@
 output "full_report_trigger_arn" {
-    value = aws_lambda_function.full_report_trigger.arn
+  value = aws_lambda_function.full_report_trigger.arn
 }
 output "full_report_trigger_role" {
   value = aws_iam_role.full_report_trigger_role.name

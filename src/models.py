@@ -1011,17 +1011,18 @@ class FindingOccurrence(BaseModel):
 
 class Finding(BaseModel, DAL):
     finding_id: UUID
-    account_name: str
+    account_name: Optional[str]
     observed_at: Optional[datetime]
-    occurrences: list[FindingOccurrence] = Field(default=[])
-    rule_id: int
-    group_id: int
-    key: str
-    group: str
-    name: str
-    cvss2: Union[str, Any] = Field(default=None)
-    cvss3: Union[str, Any] = Field(default=None)
-    customer_cvss3: Optional[str] = Field(default=None)
+    occurrences: Optional[list[FindingOccurrence]] = Field(default=[])
+    rule_id: Optional[int]
+    group_id: Optional[int]
+    key: Optional[str]
+    group: Optional[str]
+    name: Optional[str]
+    description: Optional[str]
+    cvss2: Optional[str]
+    cvss3: Optional[str]
+    customer_cvss3: Optional[str]
 
     class Config:
         validate_assignment = True
@@ -1041,16 +1042,26 @@ class Finding(BaseModel, DAL):
         finding_id: Union[str, None] = None,
     ) -> bool:
         if finding_id:
-            self.finding_id = finding_id
-        response = services.aws.get_dynamodb(table_name=services.aws.Tables.FINDINGS, item_key={'finding_id': str(self.finding_id)})
+            self.finding_id = UUID(finding_id)
+        response = services.aws.get_dynamodb(
+            table_name=services.aws.Tables.FINDINGS,
+            item_key={"finding_id": str(self.finding_id)},
+        )
         if not response:
-            internals.logger.warning(f"Missing finding data for finding_id: {self.finding_id}")
+            internals.logger.warning(
+                f"Missing finding data for finding_id: {self.finding_id}"
+            )
             return False
         super().__init__(**response)
         return True
 
     def save(self) -> bool:
-        return services.aws.put_dynamodb(table_name=services.aws.Tables.FINDINGS, item=self.dict())
+        return services.aws.put_dynamodb(
+            table_name=services.aws.Tables.FINDINGS, item=self.dict()
+        )
 
     def delete(self) -> bool:
-        return services.aws.delete_dynamodb(table_name=services.aws.Tables.FINDINGS, item_key={'finding_id': str(self.finding_id)})
+        return services.aws.delete_dynamodb(
+            table_name=services.aws.Tables.FINDINGS,
+            item_key={"finding_id": str(self.finding_id)},
+        )
