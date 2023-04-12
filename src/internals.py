@@ -6,7 +6,7 @@ import logging
 import hmac
 import hashlib
 import threading
-from datetime import datetime, time, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta
 from base64 import b64encode
 from urllib.parse import urlparse, unquote
 from os import getenv
@@ -54,6 +54,8 @@ logger.setLevel(getattr(logging, LOG_LEVEL, DEFAULT_LOG_LEVEL))
 
 class JSONEncoder(json.JSONEncoder):
     def default(self, o):
+        if isinstance(o, date):
+            return o.isoformat()
         if isinstance(o, datetime):
             return o.replace(microsecond=0).isoformat()
         if isinstance(o, int) and o > 10 ^ 38 - 1:
@@ -102,33 +104,6 @@ def post_beacon(url: AnyHttpUrl, body: dict, headers: dict = None):  # type: ign
         headers = {"Content-Type": "application/json"}
     threading.Thread(target=_request_task, args=(url, body, headers)).start()
 
-def date_label(date: datetime) -> tuple[str, str, int]:
-    label = "a moment ago"
-    group = "week"
-    now = datetime.now(timezone.utc)
-    delta = now - date
-    if delta.days >= 365:
-        group = "year"
-        label = (
-            f"{round(delta.days / 365, 0)} years ago"
-            if delta.days <= 730
-            else "1 year ago"
-        )
-    elif delta.days >= 31:
-        group = "month"
-        label = "1 month ago"
-        if delta.days <= 60:
-            label = f"{round(delta.days/30, 0)} months ago"
-    elif delta.days == 0:
-        label = "today"
-    elif delta.days == 1:
-        label = "1 day ago"
-    elif delta.days >= 2:
-        label = f"{delta.days} days ago"
-    timestamp = datetime.combine(
-        now - delta, time(0, 0, 0), tzinfo=timezone.utc
-    ).timestamp()
-    return label, group, round(timestamp)
 
 class HMAC:
     default_algorithm = "sha512"
