@@ -1,5 +1,7 @@
 resource "aws_lambda_function" "full_report_trigger" {
-  filename         = "${abspath(path.module)}/${local.source_file}"
+  s3_bucket = aws_s3_object.file_upload.bucket
+  s3_key    = aws_s3_object.file_upload.key
+  # kms_key_arn = "" If this configuration is not provided when environment variables are in use, AWS Lambda uses a default service key
   source_code_hash = filebase64sha256("${abspath(path.module)}/${local.source_file}")
   function_name    = local.function_name
   role             = aws_iam_role.full_report_trigger_role.arn
@@ -48,4 +50,12 @@ resource "aws_cloudwatch_log_group" "full_report_trigger_logs" {
   skip_destroy      = var.app_env == "Prod"
   name              = "/aws/lambda/${aws_lambda_function.full_report_trigger.function_name}"
   retention_in_days = local.retention_in_days
+}
+
+resource "aws_s3_object" "file_upload" {
+  bucket       = data.terraform_remote_state.trivialscan_s3.outputs.trivialscan_store_bucket
+  key          = "lambda-functions/${local.function_name}.zip"
+  source       = "${abspath(path.module)}/${local.source_file}"
+  content_type = "application/octet-stream"
+  etag         = filemd5("${abspath(path.module)}/${local.source_file}")
 }
