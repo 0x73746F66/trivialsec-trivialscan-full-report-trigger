@@ -1,7 +1,10 @@
 # pylint disable=invalid-name
 import json
+from os import getenv
 from uuid import uuid5
 from datetime import datetime, timezone
+
+from lumigo_tracer import lumigo_tracer
 
 import internals
 import models
@@ -10,7 +13,19 @@ import services.webhook
 import services.sendgrid
 
 
+@lumigo_tracer(
+    token=services.aws.get_ssm(f'/{internals.APP_ENV}/{internals.APP_NAME}/Lumigo/token', WithDecryption=True),
+    should_report=internals.APP_ENV == "Prod",
+    skip_collecting_http_body=True,
+    verbose=getenv("AWS_EXECUTION_ENV") is None,
+)
 def handler(event, context):
+    internals.trace_tag({
+        "source": event["source"],
+        "resources": ",".join([
+            e.split(":")[-1] for e in event["resources"]
+        ]),
+    })
     trigger_object: str = event["Records"][0]["s3"]["object"]["key"]
     internals.logger.info(f"Triggered by {trigger_object}")
     internals.logger.debug(f"raw {event}")
