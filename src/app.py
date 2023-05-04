@@ -20,12 +20,13 @@ import services.sendgrid
     verbose=getenv("AWS_EXECUTION_ENV") is None,
 )
 def handler(event, context):
-    internals.trace_tag({
-        "source": event["source"],
-        "resources": ",".join([
-            e.split(":")[-1] for e in event["resources"]
-        ]),
-    })
+    if event.get("source"):
+        internals.trace_tag({
+            "source": event["source"],
+            "resources": ",".join([
+                e.split(":")[-1] for e in event["resources"]
+            ]),
+        })
     trigger_object: str = event["Records"][0]["s3"]["object"]["key"]
     internals.logger.info(f"Triggered by {trigger_object}")
     internals.logger.debug(f"raw {event}")
