@@ -1,11 +1,12 @@
-# pylint: disable=line-too-long
+# pylint: disable=no-self-argument, arguments-differ
 import contextlib
-import json
 import logging
 import threading
-from datetime import datetime, date
-from os import getenv
+import json
+from time import sleep
 from uuid import UUID
+from os import getenv
+from datetime import datetime, date
 from ipaddress import (
     IPv4Address,
     IPv6Address,
@@ -15,7 +16,7 @@ from ipaddress import (
 
 import boto3
 import requests
-from lumigo_tracer import add_execution_tag
+from lumigo_tracer import add_execution_tag, report_error
 from pydantic import (
     HttpUrl,
     AnyHttpUrl,
@@ -28,16 +29,32 @@ CACHE_DIR = getenv("CACHE_DIR", "/tmp")
 JITTER_SECONDS = int(getenv("JITTER_SECONDS", default="30"))
 APP_ENV = getenv("APP_ENV", "Dev")
 APP_NAME = getenv("APP_NAME", "trivialscan-full-report-trigger")
-DEFAULT_LOG_LEVEL = "WARNING"
-LOG_LEVEL = getenv("LOG_LEVEL", DEFAULT_LOG_LEVEL)
+DEFAULT_LOG_LEVEL = logging.WARNING
+LOG_LEVEL = getenv("LOG_LEVEL", 'WARNING')
 NAMESPACE = UUID('bc6e2cd5-1f59-487f-b05b-49946bd078b2')
 ORIGIN_HOST = "dev.trivialsec.com" if APP_ENV == "Dev" else "www.trivialsec.com"
 DASHBOARD_URL = f"https://{ORIGIN_HOST}"
-
 logger = logging.getLogger(__name__)
 if getenv("AWS_EXECUTION_ENV") is not None:
     boto3.set_stream_logger('boto3', getattr(logging, LOG_LEVEL, DEFAULT_LOG_LEVEL))
 logger.setLevel(getattr(logging, LOG_LEVEL, DEFAULT_LOG_LEVEL))
+
+
+class DelayRetryHandler(Exception):
+    """
+    Delay the retry handler and provide a useful message when retries are exceeded
+    """
+    def __init__(self, **kwargs):
+        sleep(kwargs.get("delay", 3) or 3)
+        Exception.__init__(self, kwargs.get("msg", "Max retries exceeded"))
+
+
+class UnspecifiedError(Exception):
+    """
+    The exception class for exceptions that weren't previously known.
+    """
+    def __init__(self, **kwargs):
+        Exception.__init__(self, kwargs.get("msg", "An unspecified error occurred"))
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -46,7 +63,7 @@ class JSONEncoder(json.JSONEncoder):
             return o.isoformat()
         if isinstance(o, datetime):
             return o.replace(microsecond=0).isoformat()
-        if isinstance(o, int) and o > 10^38-1:
+        if isinstance(o, int) and o > 10 ^ 38 - 1:
             return str(o)
         if isinstance(
             o,
@@ -96,6 +113,7 @@ def trace_tag(data: dict[str, str]):
         isinstance(key, str) and isinstance(value, str)
         for key, value in data.items()
     ):
+        report_error(f"Programming error with trace_tag function usage with data: {data}")
         raise ValueError(data)
     for key, value in data.items():
         if len(key) > 50:

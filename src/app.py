@@ -13,19 +13,13 @@ import services.webhook
 import services.sendgrid
 
 
-@lumigo_tracer(
-    token=services.aws.get_ssm(f'/{internals.APP_ENV}/{internals.APP_NAME}/Lumigo/token', WithDecryption=True),
-    should_report=internals.APP_ENV == "Prod",
-    skip_collecting_http_body=True,
-    verbose=getenv("AWS_EXECUTION_ENV") is None,
-)
-def handler(event, context):
+def main(event):
     if event.get("source"):
         internals.trace_tag({
             "source": event["source"],
             "resources": ",".join([
                 e.split(":")[-1] for e in event["resources"]
-            ]),
+            ]) or "manual",
         })
     trigger_object: str = event["Records"][0]["s3"]["object"]["key"]
     internals.logger.info(f"Triggered by {trigger_object}")
@@ -208,3 +202,21 @@ def handler(event, context):
             )
             if isinstance(res, dict) and res.get("errors"):
                 internals.logger.error(res.get("errors"))
+            else:
+                internals.trace_tag({
+                    'sg_msg_id': sendgrid.headers.get("X-Message-Id"),
+                    'findings': str(len(digest)),
+                })
+
+
+@lumigo_tracer(
+    token=services.aws.get_ssm(f'/{internals.APP_ENV}/{internals.APP_NAME}/Lumigo/token', WithDecryption=True),
+    should_report=internals.APP_ENV == "Prod",
+    skip_collecting_http_body=True,
+    verbose=internals.APP_ENV != "Prod"
+)
+def handler(event, context):
+    try:
+        main(event)
+    except Exception as err:
+        raise internals.UnspecifiedError from err
