@@ -3,6 +3,8 @@ import contextlib
 import logging
 import threading
 import json
+from inspect import getframeinfo, stack
+from typing import Union
 from time import sleep
 from uuid import UUID
 from os import getenv
@@ -16,7 +18,7 @@ from ipaddress import (
 
 import boto3
 import requests
-from lumigo_tracer import add_execution_tag, report_error
+from lumigo_tracer import add_execution_tag, error as lumigo_error
 from pydantic import (
     HttpUrl,
     AnyHttpUrl,
@@ -25,19 +27,34 @@ from pydantic import (
 )
 
 
-CACHE_DIR = getenv("CACHE_DIR", "/tmp")
+CACHE_DIR = getenv("CACHE_DIR", default="/tmp")
 JITTER_SECONDS = int(getenv("JITTER_SECONDS", default="30"))
-APP_ENV = getenv("APP_ENV", "Dev")
-APP_NAME = getenv("APP_NAME", "trivialscan-full-report-trigger")
+APP_ENV = getenv("APP_ENV", default="Dev")
+APP_NAME = getenv("APP_NAME", default="trivialscan-full-report-trigger")
 DEFAULT_LOG_LEVEL = logging.WARNING
-LOG_LEVEL = getenv("LOG_LEVEL", 'WARNING')
+LOG_LEVEL = getenv("LOG_LEVEL", default="WARNING")
 NAMESPACE = UUID('bc6e2cd5-1f59-487f-b05b-49946bd078b2')
 ORIGIN_HOST = "dev.trivialsec.com" if APP_ENV == "Dev" else "www.trivialsec.com"
 DASHBOARD_URL = f"https://{ORIGIN_HOST}"
+
 logger = logging.getLogger(__name__)
 if getenv("AWS_EXECUTION_ENV") is not None:
     boto3.set_stream_logger('boto3', getattr(logging, LOG_LEVEL, DEFAULT_LOG_LEVEL))
 logger.setLevel(getattr(logging, LOG_LEVEL, DEFAULT_LOG_LEVEL))
+
+
+def always_log(message: Union[str, Exception]):
+    caller = getframeinfo(stack()[1][0])
+    alert_type = (
+        message.__class__.__name__
+        if hasattr(message, '__class__') and message is not str
+        else "UnhandledError"
+    )
+    filename = caller.filename.replace(getenv("LAMBDA_TASK_ROOT", ""), "") if getenv("AWS_EXECUTION_ENV") is not None and getenv("LAMBDA_TASK_ROOT") else caller.filename.split('/src/')[1]
+    lumigo_error(f"{filename}:{caller.function}:{caller.lineno} - {message}", alert_type, extra={
+        'LOG_LEVEL': LOG_LEVEL,
+        'NAMESPACE': NAMESPACE.hex,
+    })
 
 
 class DelayRetryHandler(Exception):
@@ -47,14 +64,6 @@ class DelayRetryHandler(Exception):
     def __init__(self, **kwargs):
         sleep(kwargs.get("delay", 3) or 3)
         Exception.__init__(self, kwargs.get("msg", "Max retries exceeded"))
-
-
-class UnspecifiedError(Exception):
-    """
-    The exception class for exceptions that weren't previously known.
-    """
-    def __init__(self, **kwargs):
-        Exception.__init__(self, kwargs.get("msg", "An unspecified error occurred"))
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -113,12 +122,12 @@ def trace_tag(data: dict[str, str]):
         isinstance(key, str) and isinstance(value, str)
         for key, value in data.items()
     ):
-        report_error(f"Programming error with trace_tag function usage with data: {data}")
+        always_log(f"Programming error with trace_tag function usage with data: {data}")
         raise ValueError(data)
     for key, value in data.items():
-        if len(key) > 50:
-            logger.warning(f"Trace key must be less than 50 for: {value} See: https://docs.lumigo.io/docs/execution-tags#execution-tags-naming-limits-and-requirements")
-        if len(value) > 70:
+        if 1 > len(key) > 50:
+            logger.warning(f"Trace key must be less than 50 for: {key} See: https://docs.lumigo.io/docs/execution-tags#execution-tags-naming-limits-and-requirements")
+        if 1 > len(value) > 70:
             logger.warning(f"Trace value must be less than 70 for: {value} See: https://docs.lumigo.io/docs/execution-tags#execution-tags-naming-limits-and-requirements")
     if getenv("AWS_EXECUTION_ENV") is None or APP_ENV != "Prod":
         return

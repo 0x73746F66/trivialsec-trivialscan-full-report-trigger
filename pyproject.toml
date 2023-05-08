@@ -19,8 +19,9 @@ dependencies = [
     "validators == 0.20.0",
     "retry",
     "sendgrid == 6.9.7",
-    "requests == 2.28.2",
-    "pyjwt >= 2.6.0"
+    "pyjwt >= 2.6.0",
+    "requests < 2.30.0",
+    "urllib3 < 2"
 ]
 
 [tool.coverage.run]

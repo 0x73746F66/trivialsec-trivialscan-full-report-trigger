@@ -1,6 +1,5 @@
 # pylint disable=invalid-name
 import json
-from os import getenv
 from uuid import uuid5
 from datetime import datetime, timezone
 
@@ -207,6 +206,7 @@ def main(event):
                     'sg_msg_id': sendgrid.headers.get("X-Message-Id"),
                     'findings': str(len(digest)),
                 })
+    return True
 
 
 @lumigo_tracer(
@@ -215,8 +215,9 @@ def main(event):
     skip_collecting_http_body=True,
     verbose=internals.APP_ENV != "Prod"
 )
-def handler(event, context):
+def handler(event, context):  # pylint: disable=unused-argument
     try:
-        main(event)
+        return main(event)
     except Exception as err:
-        raise internals.UnspecifiedError from err
+        internals.always_log(err)
+    return False
