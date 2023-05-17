@@ -4,12 +4,12 @@ from typing import Union
 
 import requests
 from sendgrid import SendGridAPIClient
-from retry.api import retry
 
 import services.aws
 import internals
 
-logger = logging.getLogger()
+
+logger = logging.getLogger(__name__)
 
 SENDGRID_TEMPLATES = {
     "early_warning_service": "d-4d6ad6a796bb4021a326fb8ca7fb47d2",
@@ -36,25 +36,8 @@ SENDGRID_LISTS = {
     'trials': "f0c56ac3-7317-4b39-9a26-b4e37bc33efd",
 }
 
-@retry(
-    (
-        requests.exceptions.JSONDecodeError,
-        json.decoder.JSONDecodeError
-    ),
-    tries=3,
-    delay=1.5,
-    backoff=1,
-)
-def _get_pubkey(secret_key: str):
-    return requests.get(
-        url='https://api.sendgrid.com/v3/user/webhooks/event/settings/signed',
-        headers=SendGridAPIClient(secret_key).client.request_headers,
-        timeout=(5, 15)
-    ).json().get('public_key')
-
 try:
     SENDGRID_API_KEY = services.aws.get_ssm(f'/{internals.APP_ENV}/{internals.APP_NAME}/Sendgrid/api-key', WithDecryption=True)
-    WEBHOOK_PUBLIC_KEY = _get_pubkey(SENDGRID_API_KEY)
 except Exception as err:
     internals.logger.exception(err)
     exit(1)

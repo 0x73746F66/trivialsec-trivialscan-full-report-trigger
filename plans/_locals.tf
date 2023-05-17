@@ -12,7 +12,7 @@ locals {
     AutomationTool   = "Terraform"
     LUMIGO_TAG       = var.app_env == "Prod" ? "Production" : "Development"
   }
-  timeout           = 60
+  timeout           = 120
   memory_size       = 1024
   retention_in_days = var.app_env == "Prod" ? 30 : 7
   enable_dynatrace  = false # var.app_env == "Prod"

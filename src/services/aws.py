@@ -33,18 +33,18 @@ dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 
 
 class Tables(str, Enum):
-    EWS_BINARY_DEFENSE = f'{internals.APP_ENV.lower()}_ews_binarydefense'
-    EWS_BRUTE_FORCE_BLOCKER = f'{internals.APP_ENV.lower()}_ews_bruteforceblocker'
-    EWS_CH = f'{internals.APP_ENV.lower()}_ews_ch'
-    EWS_CRUZIT = f'{internals.APP_ENV.lower()}_ews_cruzit'
-    EWS_DATAPLANE = f'{internals.APP_ENV.lower()}_ews_dataplane'
-    EWS_DARKLIST = f'{internals.APP_ENV.lower()}_ews_darklist'
-    EWS_PROOFPOINT = f'{internals.APP_ENV.lower()}_ews_proofpoint'
-    EWS_TALOS = f'{internals.APP_ENV.lower()}_ews_talos'
-    LOGIN_SESSIONS = f'{internals.APP_ENV.lower()}_login_sessions'
-    REPORT_HISTORY = f'{internals.APP_ENV.lower()}_report_history'
-    OBSERVED_IDENTIFIERS = f'{internals.APP_ENV.lower()}_observed_identifiers'
-    EARLY_WARNING_SERVICE = f'{internals.APP_ENV.lower()}_early_warning_service'
+    EWS_BINARY_DEFENSE = f"{internals.APP_ENV.lower()}_ews_binarydefense"
+    EWS_BRUTE_FORCE_BLOCKER = f"{internals.APP_ENV.lower()}_ews_bruteforceblocker"
+    EWS_CH = f"{internals.APP_ENV.lower()}_ews_ch"
+    EWS_CRUZIT = f"{internals.APP_ENV.lower()}_ews_cruzit"
+    EWS_DATAPLANE = f"{internals.APP_ENV.lower()}_ews_dataplane"
+    EWS_DARKLIST = f"{internals.APP_ENV.lower()}_ews_darklist"
+    EWS_PROOFPOINT = f"{internals.APP_ENV.lower()}_ews_proofpoint"
+    EWS_TALOS = f"{internals.APP_ENV.lower()}_ews_talos"
+    LOGIN_SESSIONS = f"{internals.APP_ENV.lower()}_login_sessions"
+    REPORT_HISTORY = f"{internals.APP_ENV.lower()}_report_history"
+    OBSERVED_IDENTIFIERS = f"{internals.APP_ENV.lower()}_observed_identifiers"
+    EARLY_WARNING_SERVICE = f"{internals.APP_ENV.lower()}_early_warning_service"
     MEMBER_FIDO = f"{internals.APP_ENV.lower()}_member_fido"
     FINDINGS = f"{internals.APP_ENV.lower()}_findings"
 
@@ -306,7 +306,7 @@ def delete_s3(path_key: str, bucket_name: str = STORE_BUCKET, **kwargs) -> bool:
     internals.logger.info(f"delete_s3 object key {path_key}")
     try:
         response = s3_client.delete_object(Bucket=bucket_name, Key=path_key, **kwargs)
-        return response.get("DeleteMarker") if isinstance(response, dict) else False
+        return response.get("DeleteMarker", False) if isinstance(response, dict) else False
 
     except ClientError as err:
         if err.response["Error"]["Code"] == "NoSuchKey":  # type: ignore
@@ -517,6 +517,7 @@ def get_dynamodb(item_key: dict, table_name: Tables, default: Any = None, **kwar
         internals.always_log(err)
     return default
 
+
 @retry(
     (
         ConnectionClosedError,
@@ -544,9 +545,11 @@ def put_dynamodb(item: dict, table_name: Tables, **kwargs) -> bool:
         return response.get("ResponseMetadata", {}).get("RequestId") is not None
 
     except Exception as err:
+        internals.always_log(err)
         internals.logger.warning(err, exc_info=True)
         internals.logger.info(f"data: {data}")
     return False
+
 
 @retry(
     (
@@ -571,6 +574,7 @@ def delete_dynamodb(item_key: dict, table_name: Tables, **kwargs) -> bool:
     except Exception as err:
         internals.always_log(err)
     return False
+
 
 @retry(
     (
