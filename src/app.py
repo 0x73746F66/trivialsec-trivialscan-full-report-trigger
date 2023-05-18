@@ -5,7 +5,7 @@ from typing import Optional, Union
 from datetime import datetime, timezone
 
 from lumigo_tracer import lumigo_tracer
-from pydantic import BaseModel, validator
+from pydantic import BaseModel
 
 import internals
 import models
@@ -15,8 +15,6 @@ import services.sendgrid
 
 
 class Digest(BaseModel):
-    class Config:
-        validate_assignment = True
     name: str
     key: str
     group: str
@@ -27,17 +25,14 @@ class Digest(BaseModel):
     result_level: Optional[models.ResultLevel]
     is_critical: bool
     occurrence_id: UUID
-    report_ids: str
+    report_id: str
+    related_reports: list[str]
     hostname: str
     port: int
     last_seen: datetime
     certificate_sha1: str
     certificate_subject: str
     status: models.FindingStatus
-
-    @validator("last_seen")
-    def set_last_seen(cls, last_seen: datetime):  # pylint: disable=no-self-argument
-        return last_seen.replace(tzinfo=timezone.utc) if last_seen else None
 
 
 def prepare_event(event) -> tuple[models.MemberAccount, models.FullReport]:
@@ -60,6 +55,7 @@ def prepare_event(event) -> tuple[models.MemberAccount, models.FullReport]:
 
     _, _, account_name, *_ = trigger_object.split("/")
     account = models.MemberAccount(name=account_name)
+    internals.trace_tag({'account_name': account_name})
     if not account.load():
         raise internals.InvalidTriggerEvent(f"Failed to load account {account_name}")
 
@@ -70,7 +66,8 @@ def prepare_event(event) -> tuple[models.MemberAccount, models.FullReport]:
         report_id=report_id,
     )
     if not report.load():
-        raise internals.InvalidTriggerEvent(f"Failed to load report {report_id} for account_name {account.name}")
+        internals.always_log(f"Failed to load report {report_id} for account_name {account.name}", is_issue=False)
+        report = None
     return account, report
 
 
@@ -143,7 +140,8 @@ def process_report(account: models.MemberAccount, report: models.FullReport) -> 
                             or evaluation.result_label.lower().startswith("compromised")
                         ),
                         occurrence_id=occurrence.occurrence_id,
-                        report_ids=occurrence.report_ids,
+                        report_id=report.report_id,
+                        related_reports=occurrence.report_ids,
                         hostname=occurrence.hostname,
                         port=occurrence.port,
                         last_seen=occurrence.last_seen,
@@ -186,7 +184,8 @@ def process_report(account: models.MemberAccount, report: models.FullReport) -> 
                         or evaluation.result_label.lower().startswith("compromised")
                     ),
                     occurrence_id=occurrence.occurrence_id,
-                    report_ids=occurrence.report_ids,
+                    related_reports=occurrence.report_ids,
+                    report_id=report.report_id,
                     hostname=occurrence.hostname,
                     port=occurrence.port,
                     last_seen=occurrence.last_seen,
@@ -209,6 +208,8 @@ def process_report(account: models.MemberAccount, report: models.FullReport) -> 
 
 def main(event):
     account, report = prepare_event(event)
+    if not report:
+        return False
     if digest := process_report(account, report):
         internals.logger.info("Emailing findings digest")
         sendgrid = services.sendgrid.send_email(
@@ -231,11 +232,6 @@ def main(event):
             )
             if isinstance(res, dict) and res.get("errors"):
                 internals.logger.error(res.get("errors"))
-            else:
-                internals.trace_tag({
-                    'sg_msg_id': sendgrid.headers.get("X-Message-Id"),
-                    'findings': str(len(digest)),
-                })
     return True
 
 
